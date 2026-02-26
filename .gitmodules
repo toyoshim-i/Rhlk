@@ -7,3 +7,9 @@
 [submodule "external/run68x"]
 	path = external/run68x
 	url = https://github.com/kg68k/run68x.git
+[submodule "external/u8tosj"]
+	path = external/u8tosj
+	url = https://github.com/kg68k/u8tosj.git
+[submodule "external/has060xx"]
+	path = external/has060xx
+	url = https://github.com/kg68k/has060xx.git

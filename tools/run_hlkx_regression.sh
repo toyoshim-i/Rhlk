@@ -5,10 +5,16 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="${ROOT_DIR}/external/hlkx/tests"
 CASE_FILE="${ROOT_DIR}/tests/compat/hlkx_cases.tsv"
 ARTIFACT_DIR="${ROOT_DIR}/artifacts/hlkx-regression"
+RUN68_SUBMODULE_BIN="${ROOT_DIR}/external/run68x/build/run68"
 
 # Override these if your environment differs.
-HAS_CMD_DEFAULT="run68 has060.x"
-HLK_CMD_DEFAULT="run68 ${ROOT_DIR}/external/hlkx/build/hlk.x"
+if [[ -x "${RUN68_SUBMODULE_BIN}" ]]; then
+  RUN68_CMD_DEFAULT="${RUN68_SUBMODULE_BIN}"
+else
+  RUN68_CMD_DEFAULT="run68"
+fi
+HAS_CMD_DEFAULT="${RUN68_CMD_DEFAULT} has060.x"
+HLK_CMD_DEFAULT="${RUN68_CMD_DEFAULT} ${ROOT_DIR}/external/hlkx/build/hlk.x"
 RHLK_CMD_DEFAULT="cargo run --manifest-path ${ROOT_DIR}/Rhlk/Cargo.toml --quiet --"
 
 HAS_CMD="${HAS_CMD:-$HAS_CMD_DEFAULT}"
@@ -20,6 +26,25 @@ read -r -a HLK_ARR <<<"${HLK_CMD}"
 read -r -a RHLK_ARR <<<"${RHLK_CMD}"
 
 mkdir -p "${ARTIFACT_DIR}/orig" "${ARTIFACT_DIR}/rhlk" "${ARTIFACT_DIR}/diff"
+
+require_cmd() {
+  local cmd="$1"
+  if ! command -v "${cmd}" >/dev/null 2>&1; then
+    echo "missing command: ${cmd}" >&2
+    return 1
+  fi
+  return 0
+}
+
+require_inputs() {
+  local missing=0
+  if [[ ! -f "${ROOT_DIR}/external/hlkx/build/hlk.x" ]]; then
+    echo "missing linker binary: ${ROOT_DIR}/external/hlkx/build/hlk.x" >&2
+    echo "build HLKX first (see docs/porting/2026-02-27-regression-harness.md)." >&2
+    missing=1
+  fi
+  return "${missing}"
+}
 
 assemble_if_needed() {
   local src="$1"
@@ -95,6 +120,9 @@ compare_case() {
 }
 
 main() {
+  require_cmd cargo
+  require_inputs
+
   local failed=0
   while IFS=$'\t' read -r name flags objects ext; do
     [[ -z "${name}" || "${name:0:1}" == "#" ]] && continue

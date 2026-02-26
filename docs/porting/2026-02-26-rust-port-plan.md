@@ -69,3 +69,5 @@ HLKX 相当機能を、ホスト OS ネイティブ実行可能な Rust 実装�
 - `make_scdinfo` の `make_scd_b510..b534`（`common/rcommon/rlcommon` 参照解決）を最小対応し、SCD entry 名から xdef を引いて `sect=0003/0006/0009` へ正規化して `off.l` を再配置する処理を追加した。
 - 上記解決で xdef 未解決・不整合な section は明示エラーで停止する（黙って通さない）。
 - `run68` 前提の互換回帰ハーネスを追加し、`external/hlkx/tests` ケースを使って `stdout/stderr/終了コード/生成物(.x/.r)` を比較できる状態にした（`tools/run_hlkx_regression.sh`, `tests/compat/hlkx_cases.tsv`）。
+- `external/run68x` を submodule 追加し、回帰ハーネスは `external/run68x/build/run68` をデフォルト実行系として優先利用するようにした。
+- HLKX ビルド前提を固定するため、`external/has060xx` と `external/u8tosj` を submodule 追加した（`hlk.x` 生成ツールチェーンの参照用）。

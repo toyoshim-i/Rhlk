@@ -14,9 +14,32 @@
 - `tests/compat/hlkx_cases.tsv`
 
 ## 前提
-- `run68` が利用可能であること
+- `run68` 互換実行環境があること（`external/run68x/build/run68` を優先利用）
 - `has060.x`（アセンブラ）を `run68` 経由で実行可能であること
 - オリジナル HLK（例: `external/hlkx/build/hlk.x`）を `run68` 経由で実行可能であること
+
+## run68x のビルド
+`run68x` は submodule (`external/run68x`) として取り込まれている。
+
+```bash
+cmake -S external/run68x -B external/run68x/build
+cmake --build external/run68x/build
+```
+
+`external/run68x/build/run68` が存在する場合、回帰スクリプトはこれを自動で使う。
+存在しない場合は `PATH` 上の `run68` を使う。
+
+## HLKX ビルド前提
+`external/hlkx/build/hlk.x` が必要。これは Human68k ツールチェーンで生成する。
+
+関連 submodule:
+- `external/has060xx`（assembler 系）
+- `external/u8tosj`（UTF-8 -> Shift_JIS 変換）
+
+実環境では、`has060.x` と `u8tosj` を実行可能な形で用意し、`external/hlkx` をビルドする。
+`hlkx` 側の変換/ビルドは `external/hlkx/README.md` の手順に従う。
+
+`has060.x` がアーカイブ配布の場合は、別途 `lhasa` などで展開して配置する。
 
 ## 実行方法
 デフォルト設定のまま:
@@ -28,8 +51,8 @@
 環境に応じてコマンドを上書き:
 
 ```bash
-HAS_CMD="run68 has060.x" \
-HLK_CMD="run68 /path/to/hlk.x" \
+HAS_CMD="/path/to/run68 has060.x" \
+HLK_CMD="/path/to/run68 /path/to/hlk.x" \
 RHLK_CMD="cargo run --manifest-path /abs/path/Rhlk/Cargo.toml --quiet --" \
 ./tools/run_hlkx_regression.sh
 ```
