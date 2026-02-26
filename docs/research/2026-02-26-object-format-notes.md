@@ -55,3 +55,6 @@ HLKX 拡張:
 - `rlbss(9)`: `+ obj_list_rlbss_pos`（旧補正コードはコメントアウト）
 
 `stack(4)/rstack(7)/rlstack(10)` はこの分岐表では扱われず、該当時は `make_scd_err2` へ落ちる。
+Rust 側でも互換方針としてこの 3 種は pass-through せず、`.x` 生成を明示エラーで停止する。
+`common/rcommon/rlcommon` 参照 (`00fc..00fe/fffc..fffe`) は最小対応として、entry 名（8-byte name または ninfo 参照）から xdef を解決し、`sect=0003/0006/0009` に正規化して再配置する。
+未解決名や不整合 section は明示エラー扱いとする。

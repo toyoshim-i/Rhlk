@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::{bail, Context, Result};
 
@@ -107,7 +107,7 @@ fn build_x_image(
     let symbol_size = symbol_data.len() as u32;
     let reloc_table = build_relocation_table(objects, layout, text_size);
     let reloc_size = reloc_table.len() as u32;
-    let (scd_line, scd_info, scd_name) = build_scd_passthrough(objects, layout);
+    let (scd_line, scd_info, scd_name) = build_scd_passthrough(objects, summaries, layout)?;
     let scd_line_size = scd_line.len() as u32;
     let scd_info_size = scd_info.len() as u32;
     let scd_name_size = scd_name.len() as u32;
@@ -136,7 +136,12 @@ fn build_x_image(
     Ok(image)
 }
 
-fn build_scd_passthrough(objects: &[ObjectFile], layout: &LayoutPlan) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+fn build_scd_passthrough(
+    objects: &[ObjectFile],
+    summaries: &[ObjectSummary],
+    layout: &LayoutPlan,
+) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    let xdefs = build_scd_xdef_map(summaries);
     let mut line = Vec::new();
     let mut info = Vec::new();
     let mut name = Vec::new();
@@ -173,20 +178,23 @@ fn build_scd_passthrough(objects: &[ObjectFile], layout: &LayoutPlan) -> (Vec<u8
         p += linfo_size;
         let sinfo_count = extract_sinfo_count(tail, linfo_size);
         let sinfo_plus_einfo = &tail[p..p + sinfo_plus_einfo_size];
+        let ninfo = &tail[p + sinfo_plus_einfo_size..p + sinfo_plus_einfo_size + ninfo_size];
         info.extend_from_slice(&rebase_scd_info_table(
             sinfo_plus_einfo,
+            ninfo,
             sinfo_count,
             sinfo_pos_entries,
             &layout.placements[idx].by_section,
             layout,
-        ));
+            &xdefs,
+        )?);
         p += sinfo_plus_einfo_size;
         name.extend_from_slice(&tail[p..p + ninfo_size]);
 
         sinfo_pos_entries = sinfo_pos_entries.saturating_add(sinfo_count);
     }
 
-    (line, info, name)
+    Ok((line, info, name))
 }
 
 fn rebase_scd_line_table(input: &[u8], text_pos: u32, sinfo_pos_entries: u32) -> Vec<u8> {
@@ -220,11 +228,13 @@ fn extract_sinfo_count(tail: &[u8], linfo_size: usize) -> u32 {
 
 fn rebase_scd_info_table(
     input: &[u8],
+    ninfo: &[u8],
     sinfo_count: u32,
     sinfo_pos_entries: u32,
     placement: &BTreeMap<SectionKind, u32>,
     layout: &LayoutPlan,
-) -> Vec<u8> {
+    xdefs: &HashMap<Vec<u8>, ScdXdef>,
+) -> Result<Vec<u8>> {
     let mut out = input.to_vec();
     let sinfo_bytes = (sinfo_count as usize).saturating_mul(18).min(out.len());
     let mut p = 0usize;
@@ -253,7 +263,7 @@ fn rebase_scd_info_table(
     let mut q = sinfo_bytes;
     while q + 18 <= out.len() {
         let d6 = u32::from_be_bytes([out[q], out[q + 1], out[q + 2], out[q + 3]]);
-        let sect = u16::from_be_bytes([out[q + 8], out[q + 9]]) as u8;
+        let sect = u16::from_be_bytes([out[q + 8], out[q + 9]]);
         if d6 == 0 {
             let mut ref_idx =
                 u32::from_be_bytes([out[q + 4], out[q + 5], out[q + 6], out[q + 7]]);
@@ -262,6 +272,32 @@ fn rebase_scd_info_table(
                 out[q + 4..q + 8].copy_from_slice(&ref_idx.to_be_bytes());
             }
         } else {
+            if matches!(sect, 0x0004 | 0x0007 | 0x000a) {
+                bail!("unsupported SCD einfo section for d6!=0: {sect:#06x}");
+            }
+            if matches!(sect, 0x00fc..=0x00fe | 0xfffc..=0xfffe) {
+                let name = decode_scd_entry_name(&out[q..q + 18], ninfo)
+                    .with_context(|| format!("invalid SCD einfo name at offset {q}"))?;
+                let Some(xdef) = xdefs.get(&name) else {
+                    bail!(
+                        "unresolved SCD einfo common-reference for d6!=0: {}",
+                        String::from_utf8_lossy(&name)
+                    );
+                };
+                let (resolved_off, resolved_sect): (u32, u16) = match xdef.section {
+                    SectionKind::Common => (xdef.value, 0x0003),
+                    SectionKind::RCommon => (xdef.value, 0x0006),
+                    SectionKind::RLCommon => (xdef.value, 0x0009),
+                    _ => bail!(
+                        "unsupported SCD einfo common-reference target section: {:?}",
+                        xdef.section
+                    ),
+                };
+                out[q + 4..q + 8].copy_from_slice(&resolved_off.to_be_bytes());
+                out[q + 8..q + 10].copy_from_slice(&resolved_sect.to_be_bytes());
+                q += 18;
+                continue;
+            }
             if let Some(delta) = einfo_section_delta(sect, placement, layout) {
                 if delta != 0 {
                     let off =
@@ -273,11 +309,126 @@ fn rebase_scd_info_table(
         }
         q += 18;
     }
-    out
+    Ok(out)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScdXdef {
+    section: SectionKind,
+    value: u32,
+}
+
+fn decode_scd_entry_name(entry: &[u8], ninfo: &[u8]) -> Result<Vec<u8>> {
+    if entry.len() < 8 {
+        bail!("entry too short");
+    }
+    let head = u32::from_be_bytes([entry[0], entry[1], entry[2], entry[3]]);
+    if head != 0 {
+        let mut name = entry[0..8].to_vec();
+        while name.last() == Some(&0) {
+            name.pop();
+        }
+        return Ok(name);
+    }
+    let off = u32::from_be_bytes([entry[4], entry[5], entry[6], entry[7]]) as usize;
+    if off >= ninfo.len() {
+        bail!("ninfo offset out of range: {off}");
+    }
+    let rel_end = ninfo[off..]
+        .iter()
+        .position(|&b| b == 0)
+        .ok_or_else(|| anyhow::anyhow!("unterminated ninfo string at offset {off}"))?;
+    Ok(ninfo[off..off + rel_end].to_vec())
+}
+
+fn build_scd_xdef_map(summaries: &[ObjectSummary]) -> HashMap<Vec<u8>, ScdXdef> {
+    let mut xdefs = HashMap::<Vec<u8>, ScdXdef>::new();
+    let mut non_common = HashSet::<Vec<u8>>::new();
+
+    for summary in summaries {
+        for sym in &summary.symbols {
+            if sym.name.first() == Some(&b'*') {
+                continue;
+            }
+            if !matches!(
+                sym.section,
+                SectionKind::Common | SectionKind::RCommon | SectionKind::RLCommon
+            ) {
+                non_common.insert(sym.name.clone());
+                xdefs.entry(sym.name.clone()).or_insert(ScdXdef {
+                    section: sym.section,
+                    value: sym.value,
+                });
+            }
+        }
+    }
+
+    let mut common_size = HashMap::<Vec<u8>, (SectionKind, u32, usize, bool)>::new();
+    let mut order = 0usize;
+    for summary in summaries {
+        for sym in &summary.symbols {
+            if !matches!(
+                sym.section,
+                SectionKind::Common | SectionKind::RCommon | SectionKind::RLCommon
+            ) {
+                continue;
+            }
+            let size = align_even(sym.value);
+            let e = common_size
+                .entry(sym.name.clone())
+                .or_insert((sym.section, size, order, false));
+            order = order.saturating_add(1);
+            if e.0 != sym.section {
+                e.3 = true;
+                continue;
+            }
+            if size > e.1 {
+                e.1 = size;
+            }
+        }
+    }
+
+    let mut ordered = common_size.into_iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|(_, (_, _, ord, _))| *ord);
+    let mut common_cur = 0u32;
+    let mut rcommon_cur = 0u32;
+    let mut rlcommon_cur = 0u32;
+    for (name, (section, size, _, conflicted)) in ordered {
+        if conflicted || non_common.contains(&name) || xdefs.contains_key(&name) {
+            continue;
+        }
+        let off = match section {
+            SectionKind::Common => {
+                let v = common_cur;
+                common_cur = common_cur.saturating_add(size);
+                v
+            }
+            SectionKind::RCommon => {
+                let v = rcommon_cur;
+                rcommon_cur = rcommon_cur.saturating_add(size);
+                v
+            }
+            SectionKind::RLCommon => {
+                let v = rlcommon_cur;
+                rlcommon_cur = rlcommon_cur.saturating_add(size);
+                v
+            }
+            _ => continue,
+        };
+        xdefs.insert(
+            name,
+            ScdXdef {
+                section,
+                value: off,
+            },
+        );
+    }
+
+    xdefs
 }
 
 fn einfo_section_delta(
-    sect: u8,
+    sect: u16,
     placement: &BTreeMap<SectionKind, u32>,
     layout: &LayoutPlan,
 ) -> Option<i64> {
@@ -317,13 +468,13 @@ fn einfo_section_delta(
     let rlbss_pos = placement.get(&SectionKind::RLBss).copied().unwrap_or(0) as i64;
 
     match sect {
-        0x01 => Some(text_pos),
-        0x02 => Some(data_pos - text_total),
-        0x03 => Some(bss_pos - obj_size),
-        0x05 => Some(rdata_pos),
-        0x06 => Some(rbss_pos),
-        0x08 => Some(rldata_pos),
-        0x09 => Some(rlbss_pos),
+        0x0001 => Some(text_pos),
+        0x0002 => Some(data_pos - text_total),
+        0x0003 => Some(bss_pos - obj_size),
+        0x0005 => Some(rdata_pos),
+        0x0006 => Some(rbss_pos),
+        0x0008 => Some(rldata_pos),
+        0x0009 => Some(rlbss_pos),
         _ => None,
     }
 }
@@ -1467,13 +1618,127 @@ mod tests {
             requests: Vec::new(),
             start_address: None,
         };
-        let layout = plan_layout(&[sum0, sum1]);
-        let (_, info, _) = super::build_scd_passthrough(&[obj0, obj1], &layout);
+        let layout = plan_layout(&[sum0.clone(), sum1.clone()]);
+        let (_, info, _) =
+            super::build_scd_passthrough(&[obj0, obj1], &[sum0, sum1], &layout).expect("scd");
 
         for i in 0..6usize {
             let off_pos = 18 + (i * 18) + 4;
             assert_eq!(&info[off_pos..off_pos + 4], &[0, 0, 0, 5]); // off(3) + delta(2)
         }
+    }
+
+    #[test]
+    fn rejects_scd_einfo_stack_section_for_nonzero_d6() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::End,
+            ],
+            // linfo=0, sinfo+einfo=36, ninfo=0, sinfo_count=1
+            // second entry (einfo): d6!=0, off=1, sect=4(stack)
+            scd_tail: vec![
+                0, 0, 0, 0, 0, 0, 0, 36, 0, 0, 0, 0, //
+                b'_', b'a', 0, 0, 0, 0, 0, 0, //
+                0, 0, 0, 1, //
+                0, 1, //
+                0, 0, //
+                0, 0, //
+                0, 0, 0, 1, //
+                0, 0, 0, 1, //
+                0, 4, //
+                0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+        };
+        let sum = mk_summary(2, 2, 0);
+        let layout = plan_layout(&[sum.clone()]);
+        let err = build_x_image(&[obj], &[sum], &layout).expect_err("must reject unsupported stack sect");
+        assert!(err.to_string().contains("unsupported SCD einfo section"));
+    }
+
+    #[test]
+    fn rejects_scd_einfo_common_reference_for_nonzero_d6() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::End,
+            ],
+            // linfo=0, sinfo+einfo=36, ninfo=0, sinfo_count=1
+            // second entry (einfo): d6!=0, off=1, sect=0x00fe(.comm-like)
+            scd_tail: vec![
+                0, 0, 0, 0, 0, 0, 0, 36, 0, 0, 0, 0, //
+                b'_', b'a', 0, 0, 0, 0, 0, 0, //
+                0, 0, 0, 1, //
+                0, 1, //
+                0, 0, //
+                0, 0, //
+                0, 0, 0, 1, //
+                0, 0, 0, 1, //
+                0, 0xfe, //
+                0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+        };
+        let sum = mk_summary(2, 2, 0);
+        let layout = plan_layout(&[sum.clone()]);
+        let err = build_x_image(&[obj], &[sum], &layout)
+            .expect_err("must reject unsupported common reference");
+        assert!(err.to_string().contains("SCD einfo common-reference"));
+    }
+
+    #[test]
+    fn resolves_scd_einfo_common_reference_for_nonzero_d6() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::End,
+            ],
+            // linfo=0, sinfo+einfo=36, ninfo=0, sinfo_count=1
+            // second entry (einfo): d6!=0, name=\"_cmn\", sect=0x00fe
+            scd_tail: vec![
+                0, 0, 0, 0, 0, 0, 0, 36, 0, 0, 0, 0, //
+                b'_', b'a', 0, 0, 0, 0, 0, 0, //
+                0, 0, 0, 1, //
+                0, 1, //
+                0, 0, //
+                0, 0, //
+                b'_', b'c', b'm', b'n', 0, 0, 0, 0, //
+                0, 0xfe, //
+                0, 0, 0, 0, 0, 0, 0, 0, //
+                0, 0, 0, 0,
+            ],
+        };
+        let mut sum = mk_summary(2, 2, 0);
+        sum.symbols.push(Symbol {
+            name: b"_cmn".to_vec(),
+            section: SectionKind::Common,
+            value: 8,
+        });
+        let layout = plan_layout(&[sum.clone()]);
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+
+        let text_size = u32::from_be_bytes([image[12], image[13], image[14], image[15]]) as usize;
+        let data_size = u32::from_be_bytes([image[16], image[17], image[18], image[19]]) as usize;
+        let reloc_size = u32::from_be_bytes([image[24], image[25], image[26], image[27]]) as usize;
+        let sym_size = u32::from_be_bytes([image[28], image[29], image[30], image[31]]) as usize;
+        let line_size = u32::from_be_bytes([image[32], image[33], image[34], image[35]]) as usize;
+        let scd_info_pos = 64 + text_size + data_size + reloc_size + sym_size + line_size;
+        let off_pos = scd_info_pos + 18 + 4;
+        let sect_pos = scd_info_pos + 18 + 8;
+        // Common symbol first allocation offset is 0.
+        assert_eq!(&image[off_pos..off_pos + 4], &[0, 0, 0, 0]);
+        assert_eq!(&image[sect_pos..sect_pos + 2], &[0, 3]);
     }
 
     fn mk_summary(align: u32, text: u32, data: u32) -> ObjectSummary {

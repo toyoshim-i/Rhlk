@@ -65,3 +65,6 @@ HLKX 相当機能を、ホスト OS ネイティブ実行可能な Rust 実装�
 - SCD info pass-through をさらに拡張し、einfo entry の `d6==0` ケースに対して `sinfo` 参照インデックスへ累積 `sinfo_pos` を加算する最小補正を実装した。
 - SCD info pass-through をさらに拡張し、einfo entry の `d6!=0` ケースに対して section 別配置オフセットを `off.l` へ加算する最小補正を実装した。
 - `make_scdinfo` の `make_scd_b550..b556` 相当（`text/data/bss/rdata/rbss/rldata/rlbss`）をテストで網羅し、残分岐の先行消化を完了した。
+- `make_scdinfo` 互換として、`einfo d6!=0` で `stack/rstack/rlstack`（`sect=4/7/10`）が来た場合は明示エラーに変更した（HLK の `make_scd_err2` 相当）。
+- `make_scdinfo` の `make_scd_b510..b534`（`common/rcommon/rlcommon` 参照解決）を最小対応し、SCD entry 名から xdef を引いて `sect=0003/0006/0009` へ正規化して `off.l` を再配置する処理を追加した。
+- 上記解決で xdef 未解決・不整合な section は明示エラーで停止する（黙って通さない）。
