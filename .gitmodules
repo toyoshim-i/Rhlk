@@ -1,0 +1,6 @@
+[submodule "external/hlkx"]
+	path = external/hlkx
+	url = https://github.com/kg68k/hlkx.git
+[submodule "external/hlk-ev"]
+	path = external/hlk-ev
+	url = https://github.com/kg68k/hlk-ev.git

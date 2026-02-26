@@ -1,0 +1,18 @@
+# Rust build artifacts
+Rhlk/target/
+
+# rhlk generated outputs
+*.x
+*.r
+*.map
+
+# Editor/OS temporary files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE metadata
+.idea/
+.vscode/
