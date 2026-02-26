@@ -1,0 +1,9 @@
+# case_name<TAB>flags<TAB>objects<TAB>output_ext
+adrs_not_long		adrs_not_long.o xdef.o	x
+div_zero		div_zero.o xdef.o	x
+dup_entry		dup_entry.o r_entry.o	x
+exp		exp.o xdef.o	x
+overflow	overflow.o xdef.o	x
+reltbl_odd		reltbl_odd.o	x
+r_entry	-r	r_entry.o	r
+r_reltbl	-r	r_reltbl.o	r

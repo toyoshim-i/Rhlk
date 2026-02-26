@@ -16,3 +16,6 @@ Thumbs.db
 # IDE metadata
 .idea/
 .vscode/
+
+# regression artifacts
+artifacts/

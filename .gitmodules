@@ -4,3 +4,6 @@
 [submodule "external/hlk-ev"]
 	path = external/hlk-ev
 	url = https://github.com/kg68k/hlk-ev.git
+[submodule "external/run68x"]
+	path = external/run68x
+	url = https://github.com/kg68k/run68x.git
