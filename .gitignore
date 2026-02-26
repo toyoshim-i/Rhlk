@@ -20,3 +20,11 @@ Thumbs.db
 # regression artifacts
 artifacts/
 external/toolchain/
+
+# external Human68k tool builds
+external/has060xx/build/
+external/hlkx/build/
+external/hlkx/tests/*.o
+external/hlkx/tests/*.x
+external/hlkx/tests/*.r
+external/hlkx/tests/*.map

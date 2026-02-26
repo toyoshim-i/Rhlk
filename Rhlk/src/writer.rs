@@ -83,18 +83,21 @@ fn build_x_image(
         bail!("internal mismatch: objects/summaries/layout length differs");
     }
 
-    let linked = link_initialized_sections(
+    let mut linked = link_initialized_sections(
         objects,
         summaries,
         layout,
         &[SectionKind::Text, SectionKind::Data],
     )?;
 
-    let text = linked.get(&SectionKind::Text).cloned().unwrap_or_default();
-    let data = linked.get(&SectionKind::Data).cloned().unwrap_or_default();
-
-    let text_size = text.len() as u32;
-    let data_size = data.len() as u32;
+    let text_size = linked
+        .get(&SectionKind::Text)
+        .map(|v| v.len() as u32)
+        .unwrap_or(0);
+    let data_size = linked
+        .get(&SectionKind::Data)
+        .map(|v| v.len() as u32)
+        .unwrap_or(0);
     let bss_only = layout
         .total_size_by_section
         .get(&SectionKind::Bss)
@@ -114,6 +117,19 @@ fn build_x_image(
         .saturating_add(common_only)
         .saturating_add(stack_only);
 
+    let global_symbol_addrs =
+        build_global_symbol_addrs(summaries, layout, text_size, data_size, bss_only, common_only);
+    patch_opaque_commands(
+        &mut linked,
+        objects,
+        summaries,
+        layout,
+        &global_symbol_addrs,
+    )?;
+
+    let text = linked.get(&SectionKind::Text).cloned().unwrap_or_default();
+    let data = linked.get(&SectionKind::Data).cloned().unwrap_or_default();
+
     let symbol_data = build_symbol_table(
         summaries,
         layout,
@@ -123,7 +139,7 @@ fn build_x_image(
         common_only,
     );
     let symbol_size = symbol_data.len() as u32;
-    let reloc_table = build_relocation_table(objects, layout, text_size)?;
+    let reloc_table = build_relocation_table(objects, summaries, layout, text_size, &global_symbol_addrs)?;
     let reloc_size = reloc_table.len() as u32;
     let (scd_line, scd_info, scd_name) = build_scd_passthrough(objects, summaries, layout)?;
     let scd_line_size = scd_line.len() as u32;
@@ -702,6 +718,16 @@ fn build_object_initialized_sections(
                     entry.resize(new_len, 0);
                 }
             }
+            Command::Opaque { code, .. } => {
+                if is_initialized_section(current) {
+                    let write_size = opaque_write_size(*code) as usize;
+                    if write_size != 0 {
+                        let entry = by_section.entry(current).or_default();
+                        let new_len = entry.len() + write_size;
+                        entry.resize(new_len, 0);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -746,12 +772,21 @@ fn align_even(v: u32) -> u32 {
 
 fn build_relocation_table(
     objects: &[ObjectFile],
+    summaries: &[ObjectSummary],
     layout: &LayoutPlan,
     total_text_size: u32,
+    global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
 ) -> Result<Vec<u8>> {
     let mut offsets = Vec::<u32>::new();
-    for (idx, obj) in objects.iter().enumerate() {
-        collect_object_relocations(obj, &layout.placements[idx].by_section, total_text_size, &mut offsets);
+    for (idx, (obj, summary)) in objects.iter().zip(summaries.iter()).enumerate() {
+        collect_object_relocations(
+            obj,
+            summary,
+            &layout.placements[idx].by_section,
+            total_text_size,
+            global_symbol_addrs,
+            &mut offsets,
+        );
     }
     if let Some(odd) = offsets.iter().copied().find(|off| off & 1 != 0) {
         bail!("relocation target address is odd: {odd:#x}");
@@ -772,7 +807,24 @@ fn validate_r_convertibility(
         .get(&SectionKind::Text)
         .copied()
         .unwrap_or(0);
-    let reloc = build_relocation_table(objects, layout, text_size)?;
+    let data_size = layout
+        .total_size_by_section
+        .get(&SectionKind::Data)
+        .copied()
+        .unwrap_or(0);
+    let bss_only = layout
+        .total_size_by_section
+        .get(&SectionKind::Bss)
+        .copied()
+        .unwrap_or(0);
+    let common_only = layout
+        .total_size_by_section
+        .get(&SectionKind::Common)
+        .copied()
+        .unwrap_or(0);
+    let global_symbol_addrs =
+        build_global_symbol_addrs(summaries, layout, text_size, data_size, bss_only, common_only);
+    let reloc = build_relocation_table(objects, summaries, layout, text_size, &global_symbol_addrs)?;
     if !reloc.is_empty() {
         bail!(
             "再配置テーブルが使われています: {}",
@@ -820,8 +872,10 @@ fn to_human68k_path(path: &str) -> String {
 
 fn collect_object_relocations(
     object: &ObjectFile,
+    summary: &ObjectSummary,
     placement: &BTreeMap<SectionKind, u32>,
     total_text_size: u32,
+    global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
     out: &mut Vec<u32>,
 ) {
     let mut current = SectionKind::Text;
@@ -838,14 +892,14 @@ fn collect_object_relocations(
             Command::DefineSpace { size } => {
                 bump_cursor(&mut cursor_by_section, current, *size);
             }
-            Command::Opaque { code, .. } => {
+            Command::Opaque { code, payload } => {
                 let write_size = opaque_write_size(*code);
                 if write_size == 0 {
                     continue;
                 }
 
                 if matches!(current, SectionKind::Text | SectionKind::Data)
-                    && should_relocate(*code)
+                    && should_relocate(*code, payload, summary, global_symbol_addrs)
                 {
                     let local = cursor_by_section.get(&current).copied().unwrap_or(0);
                     let section_base = match current {
@@ -879,7 +933,172 @@ fn needs_relocation(code: u16) -> bool {
     matches!((code >> 8) as u8, 0x42 | 0x46 | 0x52 | 0x56 | 0x6a | 0x9a)
 }
 
-fn should_relocate(code: u16) -> bool {
+#[derive(Clone, Copy, Debug)]
+struct GlobalSymbolAddr {
+    section: SectionKind,
+    addr: u32,
+}
+
+fn build_global_symbol_addrs(
+    summaries: &[ObjectSummary],
+    layout: &LayoutPlan,
+    text_size: u32,
+    data_size: u32,
+    bss_only: u32,
+    common_only: u32,
+) -> HashMap<Vec<u8>, GlobalSymbolAddr> {
+    let mut map = HashMap::new();
+    for (idx, summary) in summaries.iter().enumerate() {
+        let placement = &layout.placements[idx].by_section;
+        for sym in &summary.symbols {
+            let addr = match sym.section {
+                SectionKind::Text => placement
+                    .get(&SectionKind::Text)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_add(sym.value),
+                SectionKind::Data => text_size
+                    .saturating_add(placement.get(&SectionKind::Data).copied().unwrap_or(0))
+                    .saturating_add(sym.value),
+                SectionKind::Bss => text_size
+                    .saturating_add(data_size)
+                    .saturating_add(placement.get(&SectionKind::Bss).copied().unwrap_or(0))
+                    .saturating_add(sym.value),
+                SectionKind::Stack => text_size
+                    .saturating_add(data_size)
+                    .saturating_add(bss_only)
+                    .saturating_add(common_only)
+                    .saturating_add(placement.get(&SectionKind::Stack).copied().unwrap_or(0))
+                    .saturating_add(sym.value),
+                SectionKind::Common => text_size
+                    .saturating_add(data_size)
+                    .saturating_add(bss_only)
+                    .saturating_add(sym.value),
+                _ => sym.value,
+            };
+            map.insert(
+                sym.name.clone(),
+                GlobalSymbolAddr {
+                    section: sym.section,
+                    addr,
+                },
+            );
+        }
+    }
+    map
+}
+
+fn patch_opaque_commands(
+    linked: &mut BTreeMap<SectionKind, Vec<u8>>,
+    objects: &[ObjectFile],
+    summaries: &[ObjectSummary],
+    layout: &LayoutPlan,
+    global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
+) -> Result<()> {
+    for (idx, (obj, summary)) in objects.iter().zip(summaries.iter()).enumerate() {
+        let mut current = SectionKind::Text;
+        let mut cursor_by_section = BTreeMap::<SectionKind, u32>::new();
+        for cmd in &obj.commands {
+            match cmd {
+                Command::ChangeSection { section } => {
+                    current = SectionKind::from_u8(*section);
+                }
+                Command::RawData(bytes) => {
+                    bump_cursor(&mut cursor_by_section, current, bytes.len() as u32);
+                }
+                Command::DefineSpace { size } => {
+                    bump_cursor(&mut cursor_by_section, current, *size);
+                }
+                Command::Opaque { code, payload } => {
+                    let local = cursor_by_section.get(&current).copied().unwrap_or(0);
+                    if let Some(bytes) =
+                        materialize_opaque(*code, payload, summary, global_symbol_addrs)
+                            .and_then(|v| if is_initialized_section(current) { Some(v) } else { None })
+                    {
+                        let Some(start) = layout.placements[idx].by_section.get(&current).copied() else {
+                            bump_cursor(&mut cursor_by_section, current, opaque_write_size(*code) as u32);
+                            continue;
+                        };
+                        let Some(target) = linked.get_mut(&current) else {
+                            bump_cursor(&mut cursor_by_section, current, opaque_write_size(*code) as u32);
+                            continue;
+                        };
+                        let begin = (start.saturating_add(local)) as usize;
+                        let end = begin.saturating_add(bytes.len());
+                        if end <= target.len() {
+                            target[begin..end].copy_from_slice(&bytes);
+                        }
+                    }
+                    bump_cursor(&mut cursor_by_section, current, opaque_write_size(*code) as u32);
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+fn materialize_opaque(
+    code: u16,
+    payload: &[u8],
+    summary: &ObjectSummary,
+    global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
+) -> Option<Vec<u8>> {
+    let hi = (code >> 8) as u8;
+    let lo = code as u8;
+    let base = resolve_opaque_base_value(lo, payload, summary, global_symbol_addrs)?;
+    match hi {
+        0x40 => Some(vec![0x00, base as u8]),
+        0x43 => Some(vec![base as u8]),
+        0x41 => Some((base as u16).to_be_bytes().to_vec()),
+        0x42 | 0x46 => Some((base as u32).to_be_bytes().to_vec()),
+        0x50 => {
+            let off = read_i32_be(payload.get(2..).unwrap_or(&[]))?;
+            let v = base.wrapping_add(off);
+            Some(vec![0x00, v as u8])
+        }
+        0x53 => {
+            let off = read_i32_be(payload.get(2..).unwrap_or(&[]))?;
+            let v = base.wrapping_add(off);
+            Some(vec![v as u8])
+        }
+        0x51 => {
+            let off = read_i32_be(payload.get(2..).unwrap_or(&[]))?;
+            let v = base.wrapping_add(off);
+            Some((v as u16).to_be_bytes().to_vec())
+        }
+        0x52 | 0x56 => {
+            let off = read_i32_be(payload.get(2..).unwrap_or(&[]))?;
+            let v = base.wrapping_add(off);
+            Some((v as u32).to_be_bytes().to_vec())
+        }
+        _ => None,
+    }
+}
+
+fn resolve_opaque_base_value(
+    lo: u8,
+    payload: &[u8],
+    summary: &ObjectSummary,
+    global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
+) -> Option<i32> {
+    if lo == 0xff {
+        let label_no = read_u16_be(payload)?;
+        let xref = summary.xrefs.iter().find(|x| x.value == label_no as u32)?;
+        return global_symbol_addrs.get(&xref.name).map(|v| v.addr as i32);
+    }
+    if lo <= 0x0a {
+        return read_i32_be(payload);
+    }
+    None
+}
+
+fn should_relocate(
+    code: u16,
+    payload: &[u8],
+    summary: &ObjectSummary,
+    global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
+) -> bool {
     if !needs_relocation(code) {
         return false;
     }
@@ -887,7 +1106,26 @@ fn should_relocate(code: u16) -> bool {
     if hi == 0x9a {
         return true;
     }
-    is_reloc_section((code & 0x00ff) as u8)
+    let lo = (code & 0x00ff) as u8;
+    if is_reloc_section(lo) {
+        return true;
+    }
+    if lo == 0xff {
+        let Some(label_no) = read_u16_be(payload) else {
+            return false;
+        };
+        let Some(xref) = summary.xrefs.iter().find(|x| x.value == label_no as u32) else {
+            return false;
+        };
+        let Some(sym) = global_symbol_addrs.get(&xref.name) else {
+            return false;
+        };
+        return matches!(
+            sym.section,
+            SectionKind::Text | SectionKind::Data | SectionKind::Bss | SectionKind::Stack | SectionKind::Common
+        );
+    }
+    false
 }
 
 fn is_reloc_section(sect: u8) -> bool {
@@ -1789,6 +2027,147 @@ mod tests {
             &image[reloc_pos..reloc_pos + 6],
             &[0x00, 0x00, 0x00, 0x06, 0x00, 0x0a]
         );
+    }
+
+    #[test]
+    fn patches_xref_long_value_and_keeps_following_rawdata_position() {
+        let main_obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 8,
+                    name: b"text".to_vec(),
+                },
+                Command::DefineSymbol {
+                    section: 0xff, // xref
+                    value: 1,      // label no
+                    name: b"func".to_vec(),
+                },
+                Command::DefineSymbol {
+                    section: 0x01,
+                    value: 0,
+                    name: b"start".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0x4e, 0xb9]), // jsr abs.l
+                Command::Opaque {
+                    code: 0x42ff, // long xref
+                    payload: vec![0x00, 0x01],
+                },
+                Command::RawData(vec![0x4e, 0x75]), // rts
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sub_obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::DefineSymbol {
+                    section: 0x01,
+                    value: 0,
+                    name: b"func".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0x4e, 0x75]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+
+        let mut main_sum = mk_summary(2, 8, 0);
+        main_sum.xrefs.push(Symbol {
+            name: b"func".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        main_sum.symbols.push(Symbol {
+            name: b"start".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+
+        let mut sub_sum = mk_summary(2, 2, 0);
+        sub_sum.symbols.push(Symbol {
+            name: b"func".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+
+        let layout = plan_layout(&[main_sum.clone(), sub_sum.clone()]);
+        let image = build_x_image(&[main_obj, sub_obj], &[main_sum, sub_sum], &layout).expect("x image");
+
+        // text: jsr abs.l func ; rts ; func: rts
+        assert_eq!(
+            &image[64..74],
+            &[0x4e, 0xb9, 0x00, 0x00, 0x00, 0x08, 0x4e, 0x75, 0x4e, 0x75]
+        );
+        // relocation size should contain one entry for the long address at text+2
+        assert_eq!(&image[24..28], &(2u32.to_be_bytes()));
+        assert_eq!(&image[74..76], &[0x00, 0x02]);
+    }
+
+    #[test]
+    fn does_not_relocate_xref_long_when_symbol_is_absolute() {
+        let user_obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::DefineSymbol {
+                    section: 0xff,
+                    value: 1,
+                    name: b"abs_sym".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x42ff,
+                    payload: vec![0x00, 0x01],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let abs_obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 0,
+                    name: b"text".to_vec(),
+                },
+                Command::DefineSymbol {
+                    section: 0x00, // absolute
+                    value: 0x1234_5678,
+                    name: b"abs_sym".to_vec(),
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+
+        let mut user_sum = mk_summary(2, 4, 0);
+        user_sum.xrefs.push(Symbol {
+            name: b"abs_sym".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        let mut abs_sum = mk_summary(2, 0, 0);
+        abs_sum.symbols.push(Symbol {
+            name: b"abs_sym".to_vec(),
+            section: SectionKind::Abs,
+            value: 0x1234_5678,
+        });
+
+        let layout = plan_layout(&[user_sum.clone(), abs_sum.clone()]);
+        let image = build_x_image(&[user_obj, abs_obj], &[user_sum, abs_sum], &layout).expect("x image");
+        // text payload must be absolute immediate, with no relocation entries.
+        assert_eq!(&image[64..68], &[0x12, 0x34, 0x56, 0x78]);
+        assert_eq!(&image[24..28], &(0u32.to_be_bytes()));
     }
 
     #[test]
