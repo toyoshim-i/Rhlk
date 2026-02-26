@@ -16,6 +16,8 @@ pub fn write_output(
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
 ) -> Result<()> {
+    validate_link_inputs(objects, summaries)?;
+
     if r_format && !r_no_check {
         validate_r_convertibility(objects, summaries, layout)?;
     }
@@ -61,6 +63,7 @@ fn build_x_image(
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
 ) -> Result<Vec<u8>> {
+    validate_link_inputs(objects, summaries)?;
     if objects.len() != summaries.len() || objects.len() != layout.placements.len() {
         bail!("internal mismatch: objects/summaries/layout length differs");
     }
@@ -105,14 +108,14 @@ fn build_x_image(
         common_only,
     );
     let symbol_size = symbol_data.len() as u32;
-    let reloc_table = build_relocation_table(objects, layout, text_size);
+    let reloc_table = build_relocation_table(objects, layout, text_size)?;
     let reloc_size = reloc_table.len() as u32;
     let (scd_line, scd_info, scd_name) = build_scd_passthrough(objects, summaries, layout)?;
     let scd_line_size = scd_line.len() as u32;
     let scd_info_size = scd_info.len() as u32;
     let scd_name_size = scd_name.len() as u32;
 
-    let exec = resolve_exec_address(summaries, text_size, data_size, bss_size).unwrap_or(0);
+    let exec = resolve_exec_address(summaries, text_size, data_size, bss_size)?.unwrap_or(0);
     let header = build_x_header(
         text_size,
         data_size,
@@ -573,6 +576,7 @@ fn build_r_payload(
     layout: &LayoutPlan,
     omit_bss: bool,
 ) -> Result<Vec<u8>> {
+    validate_link_inputs(objects, summaries)?;
     let linked = link_initialized_sections(
         objects,
         summaries,
@@ -730,14 +734,17 @@ fn build_relocation_table(
     objects: &[ObjectFile],
     layout: &LayoutPlan,
     total_text_size: u32,
-) -> Vec<u8> {
+) -> Result<Vec<u8>> {
     let mut offsets = Vec::<u32>::new();
     for (idx, obj) in objects.iter().enumerate() {
         collect_object_relocations(obj, &layout.placements[idx].by_section, total_text_size, &mut offsets);
     }
+    if let Some(odd) = offsets.iter().copied().find(|off| off & 1 != 0) {
+        bail!("relocation target address is odd: {odd:#x}");
+    }
     offsets.sort_unstable();
     offsets.dedup();
-    encode_relocation_offsets(&offsets)
+    Ok(encode_relocation_offsets(&offsets))
 }
 
 fn validate_r_convertibility(
@@ -750,7 +757,7 @@ fn validate_r_convertibility(
         .get(&SectionKind::Text)
         .copied()
         .unwrap_or(0);
-    let reloc = build_relocation_table(objects, layout, text_size);
+    let reloc = build_relocation_table(objects, layout, text_size)?;
     if !reloc.is_empty() {
         bail!("relocation table is used; use --rn to force .r output");
     }
@@ -779,7 +786,7 @@ fn validate_r_convertibility(
                 .copied()
                 .unwrap_or(0),
         );
-    let exec = resolve_exec_address(summaries, text_size, data_size, bss_size).unwrap_or(0);
+    let exec = resolve_exec_address(summaries, text_size, data_size, bss_size)?.unwrap_or(0);
     if exec != 0 {
         bail!("exec address is not file head; use --rn to force .r output");
     }
@@ -924,8 +931,17 @@ fn resolve_exec_address(
     text_size: u32,
     data_size: u32,
     _bss_size: u32,
-) -> Option<u32> {
-    let start = summaries.iter().filter_map(|s| s.start_address).last()?;
+) -> Result<Option<u32>> {
+    let starts = summaries
+        .iter()
+        .filter_map(|s| s.start_address)
+        .collect::<Vec<_>>();
+    if starts.len() > 1 {
+        bail!("multiple start addresses are specified");
+    }
+    let Some(start) = starts.first().copied() else {
+        return Ok(None);
+    };
     let (sect, addr) = start;
     let base = match sect as u8 {
         0x01 => 0,
@@ -933,7 +949,43 @@ fn resolve_exec_address(
         0x03 => text_size.saturating_add(data_size),
         _ => 0,
     };
-    Some(base.saturating_add(addr))
+    Ok(Some(base.saturating_add(addr)))
+}
+
+fn validate_link_inputs(objects: &[ObjectFile], summaries: &[ObjectSummary]) -> Result<()> {
+    validate_single_start_address(summaries)?;
+    validate_unsupported_expression_commands(objects)?;
+    Ok(())
+}
+
+fn validate_single_start_address(summaries: &[ObjectSummary]) -> Result<()> {
+    let count = summaries.iter().filter(|s| s.start_address.is_some()).count();
+    if count > 1 {
+        bail!("multiple start addresses are specified");
+    }
+    Ok(())
+}
+
+fn validate_unsupported_expression_commands(objects: &[ObjectFile]) -> Result<()> {
+    for (obj_idx, obj) in objects.iter().enumerate() {
+        for cmd in &obj.commands {
+            let Command::Opaque { code, .. } = cmd else {
+                continue;
+            };
+            let hi = (code >> 8) as u8;
+            let unsupported = matches!(
+                hi,
+                0x40 | 0x41 | 0x43 | 0x45 | 0x47 | 0x50 | 0x51 | 0x53 | 0x55 | 0x57
+                    | 0x65 | 0x69 | 0x6b | 0x90 | 0x91 | 0x93 | 0x99 | 0xa0
+            );
+            if unsupported {
+                bail!(
+                    "unsupported object command for expression/address evaluation: {code:#06x} (object {obj_idx})"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn put_u32_be(buf: &mut [u8], at: usize, v: u32) {
@@ -1180,6 +1232,80 @@ mod tests {
         let err =
             validate_r_convertibility(&[obj], &[sum], &layout).expect_err("should reject conversion");
         assert!(err.to_string().contains("exec address is not file head"));
+    }
+
+    #[test]
+    fn rejects_multiple_start_addresses() {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = obj0.clone();
+        let mut sum0 = mk_summary(2, 2, 0);
+        let mut sum1 = mk_summary(2, 2, 0);
+        sum0.start_address = Some((0x01, 0));
+        sum1.start_address = Some((0x01, 0));
+        let layout = plan_layout(&[sum0.clone(), sum1.clone()]);
+        let err = build_x_image(&[obj0, obj1], &[sum0, sum1], &layout).expect_err("must reject");
+        assert!(err.to_string().contains("multiple start addresses"));
+    }
+
+    #[test]
+    fn rejects_odd_relocation_target() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 6,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0xaa]), // make relocation position odd
+                Command::Opaque {
+                    code: 0x4201, // long relocation candidate
+                    payload: vec![0, 0, 0, 0],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 6, 0);
+        let layout = plan_layout(&[sum.clone()]);
+        let err = build_x_image(&[obj], &[sum], &layout).expect_err("must reject odd relocation");
+        assert!(err.to_string().contains("relocation target address is odd"));
+    }
+
+    #[test]
+    fn rejects_unimplemented_expression_commands() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 0,
+                    name: b"text".to_vec(),
+                },
+                Command::Opaque {
+                    code: 0xa001,
+                    payload: Vec::new(),
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 0, 0);
+        let layout = plan_layout(&[sum.clone()]);
+        let err =
+            build_x_image(&[obj], &[sum], &layout).expect_err("must reject expression command");
+        assert!(err
+            .to_string()
+            .contains("unsupported object command for expression/address evaluation"));
     }
 
     #[test]

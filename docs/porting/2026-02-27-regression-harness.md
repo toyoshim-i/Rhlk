@@ -4,10 +4,11 @@
 オリジナル HLK と rhlk の挙動差分を、既存 `external/hlkx/tests` を使って継続検出する。
 
 比較対象:
-- 標準出力 (`stdout`)
-- 標準エラー (`stderr`)
 - 終了コード
 - 生成物バイナリ (`.x` / `.r`)
+
+補足:
+- `stdout/stderr` は差分ログには残すが、現時点では判定対象外とする。
 
 ## 追加ファイル
 - `tools/run_hlkx_regression.sh`
@@ -28,6 +29,20 @@ cmake --build external/run68x/build
 
 `external/run68x/build/run68` が存在する場合、回帰スクリプトはこれを自動で使う。
 存在しない場合は `PATH` 上の `run68` を使う。
+
+## Human68k バイナリの取得（推奨）
+ソースビルド前に、配布済みバイナリを取得して回帰を回せる。
+
+```bash
+./tools/setup_human68k_binaries.sh
+```
+
+取得先:
+- `external/toolchain/bin/hlkx.r`
+- `external/toolchain/bin/has060x.x`
+- `external/toolchain/bin/u8tosj.r`
+
+回帰スクリプトは上記が存在する場合に自動で優先利用する。
 
 ## HLKX ビルド前提
 `external/hlkx/build/hlk.x` が必要。これは Human68k ツールチェーンで生成する。

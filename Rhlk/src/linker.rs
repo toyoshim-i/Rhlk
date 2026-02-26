@@ -61,6 +61,8 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         }
     }
 
-    println!("rhlk: parsed {} input file(s)", args.inputs.len());
+    if args.verbose {
+        println!("rhlk: parsed {} input file(s)", args.inputs.len());
+    }
     Ok(())
 }

@@ -19,3 +19,4 @@ Thumbs.db
 
 # regression artifacts
 artifacts/
+external/toolchain/

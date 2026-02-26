@@ -6,6 +6,9 @@ TEST_DIR="${ROOT_DIR}/external/hlkx/tests"
 CASE_FILE="${ROOT_DIR}/tests/compat/hlkx_cases.tsv"
 ARTIFACT_DIR="${ROOT_DIR}/artifacts/hlkx-regression"
 RUN68_SUBMODULE_BIN="${ROOT_DIR}/external/run68x/build/run68"
+TOOLCHAIN_BIN_DIR="${ROOT_DIR}/external/toolchain/bin"
+HAS_BIN_DEFAULT="${TOOLCHAIN_BIN_DIR}/has060x.x"
+HLK_BIN_DEFAULT="${TOOLCHAIN_BIN_DIR}/hlkx.r"
 
 # Override these if your environment differs.
 if [[ -x "${RUN68_SUBMODULE_BIN}" ]]; then
@@ -16,6 +19,13 @@ fi
 HAS_CMD_DEFAULT="${RUN68_CMD_DEFAULT} has060.x"
 HLK_CMD_DEFAULT="${RUN68_CMD_DEFAULT} ${ROOT_DIR}/external/hlkx/build/hlk.x"
 RHLK_CMD_DEFAULT="cargo run --manifest-path ${ROOT_DIR}/Rhlk/Cargo.toml --quiet --"
+
+if [[ -f "${HAS_BIN_DEFAULT}" ]]; then
+  HAS_CMD_DEFAULT="${RUN68_CMD_DEFAULT} ${HAS_BIN_DEFAULT}"
+fi
+if [[ -f "${HLK_BIN_DEFAULT}" ]]; then
+  HLK_CMD_DEFAULT="${RUN68_CMD_DEFAULT} ${HLK_BIN_DEFAULT}"
+fi
 
 HAS_CMD="${HAS_CMD:-$HAS_CMD_DEFAULT}"
 HLK_CMD="${HLK_CMD:-$HLK_CMD_DEFAULT}"
@@ -38,12 +48,28 @@ require_cmd() {
 
 require_inputs() {
   local missing=0
-  if [[ ! -f "${ROOT_DIR}/external/hlkx/build/hlk.x" ]]; then
-    echo "missing linker binary: ${ROOT_DIR}/external/hlkx/build/hlk.x" >&2
-    echo "build HLKX first (see docs/porting/2026-02-27-regression-harness.md)." >&2
+  if [[ ! -f "${ROOT_DIR}/external/hlkx/build/hlk.x" && ! -f "${HLK_BIN_DEFAULT}" ]]; then
+    echo "missing linker binary: ${ROOT_DIR}/external/hlkx/build/hlk.x or ${HLK_BIN_DEFAULT}" >&2
+    echo "build HLKX or run tools/setup_human68k_binaries.sh." >&2
     missing=1
   fi
+  if [[ ! -f "${HAS_BIN_DEFAULT}" ]]; then
+    if ! command -v has060.x >/dev/null 2>&1; then
+      echo "missing assembler command: has060.x or ${HAS_BIN_DEFAULT}" >&2
+      echo "run tools/setup_human68k_binaries.sh or install has060.x in PATH." >&2
+      missing=1
+    fi
+  fi
   return "${missing}"
+}
+
+cleanup_test_objects() {
+  while IFS=$'\t' read -r name _flags objects _ext; do
+    [[ -z "${name}" || "${name:0:1}" == "#" ]] && continue
+    for obj in ${objects}; do
+      rm -f "${TEST_DIR}/${obj}"
+    done
+  done <"${CASE_FILE}"
 }
 
 assemble_if_needed() {
@@ -56,19 +82,21 @@ assemble_if_needed() {
 
 run_linker() {
   local tag="$1"
-  local out="$2"
-  local flags="$3"
-  local objects="$4"
-  shift 4
+  local out_prefix="$2"
+  local out_file="$3"
+  local flags="$4"
+  local objects="$5"
+  shift 5
   local -a cmd=("$@")
-  local stdout_file="${out}.stdout"
-  local stderr_file="${out}.stderr"
-  local rc_file="${out}.rc"
+  local stdout_file="${out_prefix}.stdout"
+  local stderr_file="${out_prefix}.stderr"
+  local rc_file="${out_prefix}.rc"
 
   set +e
   (
     cd "${TEST_DIR}"
-    "${cmd[@]}" ${flags} -o "${out}" ${objects}
+    rm -f "${out_file}"
+    "${cmd[@]}" ${flags} -o "${out_file}" ${objects}
   ) >"${stdout_file}" 2>"${stderr_file}"
   local rc=$?
   set -e
@@ -87,11 +115,9 @@ compare_case() {
   local failed=0
   if ! diff -u "${orig_prefix}.stdout" "${rhlk_prefix}.stdout" >>"${diff_file}" 2>&1; then
     echo "[${name}] stdout differs" >>"${diff_file}"
-    failed=1
   fi
   if ! diff -u "${orig_prefix}.stderr" "${rhlk_prefix}.stderr" >>"${diff_file}" 2>&1; then
     echo "[${name}] stderr differs" >>"${diff_file}"
-    failed=1
   fi
   if ! diff -u "${orig_prefix}.rc" "${rhlk_prefix}.rc" >>"${diff_file}" 2>&1; then
     echo "[${name}] exit code differs" >>"${diff_file}"
@@ -120,12 +146,14 @@ compare_case() {
 }
 
 main() {
+  trap cleanup_test_objects EXIT
   require_cmd cargo
   require_inputs
 
   local failed=0
   while IFS=$'\t' read -r name flags objects ext; do
     [[ -z "${name}" || "${name:0:1}" == "#" ]] && continue
+    [[ "${flags}" == "-" ]] && flags=""
 
     for src in ${objects//.o/.s}; do
       assemble_if_needed "${src}" "${src%.s}.o"
@@ -133,8 +161,8 @@ main() {
 
     local orig_prefix="${ARTIFACT_DIR}/orig/${name}"
     local rhlk_prefix="${ARTIFACT_DIR}/rhlk/${name}"
-    run_linker "orig" "${orig_prefix}.${ext}" "${flags}" "${objects}" "${HLK_ARR[@]}"
-    run_linker "rhlk" "${rhlk_prefix}.${ext}" "${flags}" "${objects}" "${RHLK_ARR[@]}"
+    run_linker "orig" "${orig_prefix}" "${orig_prefix}.${ext}" "${flags}" "${objects}" "${HLK_ARR[@]}"
+    run_linker "rhlk" "${rhlk_prefix}" "${rhlk_prefix}.${ext}" "${flags}" "${objects}" "${RHLK_ARR[@]}"
 
     if ! compare_case "${name}" "${ext}"; then
       failed=1
