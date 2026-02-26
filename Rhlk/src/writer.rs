@@ -1298,6 +1298,7 @@ fn classify_expression_errors(
     current: SectionKind,
     calc_stack: &mut Vec<ExprEntry>,
 ) -> Vec<&'static str> {
+    const CALC_STACK_SIZE_HLK: usize = 1024;
     let hi = (code >> 8) as u8;
     let lo = code as u8;
     let payload = match cmd {
@@ -1306,6 +1307,9 @@ fn classify_expression_errors(
     };
     match hi {
         0x80 => {
+            if calc_stack.len() >= CALC_STACK_SIZE_HLK {
+                return vec!["計算用スタックが溢れました"];
+            }
             if let Some(entry) = evaluate_push_80(lo, payload, summary, global_symbols) {
                 calc_stack.push(entry);
             }
@@ -1321,6 +1325,7 @@ fn classify_expression_errors(
         0x41 => evaluate_direct_word(lo, payload, summary, global_symbols, current),
         0x51 => evaluate_direct_word_with_offset(lo, payload, summary, global_symbols, current),
         0x65 => evaluate_rel_word(lo, payload, summary, global_symbols),
+        0x6a => evaluate_d32_adrs(lo, payload, summary, global_symbols),
         0x6b => evaluate_rel_byte(lo, payload, summary, global_symbols),
         _ => Vec::new(),
     }
@@ -1358,7 +1363,7 @@ fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
     match lo {
         0x01 | 0x03 | 0x04 | 0x05 | 0x06 | 0x07 => {
             let Some(mut a) = calc_stack.pop() else {
-                return Vec::new();
+                return vec!["計算用スタックに値がありません"];
             };
             if a.stat > 0 {
                 a.stat = -1;
@@ -1370,11 +1375,11 @@ fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
         }
         0x0a | 0x0b => {
             let Some(a) = calc_stack.pop() else {
-                return Vec::new();
+                return vec!["計算用スタックに値がありません"];
             };
             let Some(b) = calc_stack.pop() else {
                 calc_stack.push(a);
-                return Vec::new();
+                return vec!["計算用スタックに値がありません"];
             };
             let (res, errors) = eval_chk_calcexp2(a, b);
             if let Some(mut r) = res {
@@ -1391,11 +1396,11 @@ fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
         }
         0x0f => {
             let Some(a) = calc_stack.pop() else {
-                return Vec::new();
+                return vec!["計算用スタックに値がありません"];
             };
             let Some(b) = calc_stack.pop() else {
                 calc_stack.push(a);
-                return Vec::new();
+                return vec!["計算用スタックに値がありません"];
             };
             let mut errors = Vec::new();
             let mut out = ExprEntry {
@@ -1416,11 +1421,11 @@ fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
         }
         0x10 => {
             let Some(a) = calc_stack.pop() else {
-                return Vec::new();
+                return vec!["計算用スタックに値がありません"];
             };
             let Some(b) = calc_stack.pop() else {
                 calc_stack.push(a);
-                return Vec::new();
+                return vec!["計算用スタックに値がありません"];
             };
             let mut errors = Vec::new();
             let mut out = ExprEntry {
@@ -1444,11 +1449,11 @@ fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
         }
         0x09 | 0x0c | 0x0d | 0x0e | 0x11..=0x1d => {
             let Some(a) = calc_stack.pop() else {
-                return Vec::new();
+                return vec!["計算用スタックに値がありません"];
             };
             let Some(b) = calc_stack.pop() else {
                 calc_stack.push(a);
-                return Vec::new();
+                return vec!["計算用スタックに値がありません"];
             };
             let (res, errors) = eval_chk_calcexp2(a, b);
             if let Some(r) = res {
@@ -1493,7 +1498,7 @@ fn evaluate_wrt_stk_9300(calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
 
 fn evaluate_wrt_stk_byte(calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
     let Some(v) = calc_stack.pop() else {
-        return Vec::new();
+        return vec!["計算用スタックに値がありません"];
     };
     if v.stat == 0 {
         if !fits_byte(v.value) {
@@ -1509,7 +1514,7 @@ fn evaluate_wrt_stk_byte(calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
 
 fn evaluate_wrt_stk_9100(calc_stack: &mut Vec<ExprEntry>, current: SectionKind) -> Vec<&'static str> {
     let Some(v) = calc_stack.pop() else {
-        return Vec::new();
+        return vec!["計算用スタックに値がありません"];
     };
     if v.stat == 0 {
         if !fits_word(v.value) {
@@ -1534,7 +1539,7 @@ fn evaluate_wrt_stk_9100(calc_stack: &mut Vec<ExprEntry>, current: SectionKind) 
 
 fn evaluate_wrt_stk_9900(calc_stack: &mut Vec<ExprEntry>, current: SectionKind) -> Vec<&'static str> {
     let Some(v) = calc_stack.pop() else {
-        return Vec::new();
+        return vec!["計算用スタックに値がありません"];
     };
     if v.stat == 0 {
         if !fits_word2(v.value) {
@@ -1759,6 +1764,26 @@ fn evaluate_rel_byte(
         }
     }
     vec!["バイトサイズ(-$80〜$7f)で表現できない値"]
+}
+
+fn evaluate_d32_adrs(
+    _lo: u8,
+    payload: &[u8],
+    summary: &ObjectSummary,
+    global_symbols: &HashMap<Vec<u8>, Symbol>,
+) -> Vec<&'static str> {
+    let Some(label_no) = read_u16_be(payload.get(4..).unwrap_or(&[])) else {
+        return Vec::new();
+    };
+    if let Some((section, _)) = resolve_xref(label_no, summary, global_symbols) {
+        if matches!(
+            section,
+            SectionKind::Text | SectionKind::Data | SectionKind::Bss | SectionKind::Stack | SectionKind::Common
+        ) {
+            return Vec::new();
+        }
+    }
+    vec!["32ビットディスプレースメントにアドレス属性シンボルの値を出力"]
 }
 
 fn section_stat(section: SectionKind) -> i16 {

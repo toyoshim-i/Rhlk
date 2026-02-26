@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="${ROOT_DIR}/external/hlkx/tests"
 CASE_FILE="${ROOT_DIR}/tests/compat/hlkx_cases.tsv"
+FIXTURE_DIR="${ROOT_DIR}/tests/compat/fixtures"
 ARTIFACT_DIR="${ROOT_DIR}/artifacts/hlkx-regression"
 RUN68_SUBMODULE_BIN="${ROOT_DIR}/external/run68x/build/run68"
 TOOLCHAIN_BIN_DIR="${ROOT_DIR}/external/toolchain/bin"
@@ -75,9 +76,20 @@ cleanup_test_objects() {
 assemble_if_needed() {
   local src="$1"
   local obj="$2"
-  if [[ ! -f "${obj}" || "${src}" -nt "${obj}" ]]; then
-    (cd "${TEST_DIR}" && "${HAS_ARR[@]}" -o "${obj}" "${src}")
+  local src_path="${TEST_DIR}/${src}"
+  local fixture="${FIXTURE_DIR}/${obj}"
+  if [[ -f "${src_path}" ]]; then
+    if [[ ! -f "${TEST_DIR}/${obj}" || "${src_path}" -nt "${TEST_DIR}/${obj}" ]]; then
+      (cd "${TEST_DIR}" && "${HAS_ARR[@]}" -o "${obj}" "${src}")
+    fi
+    return 0
   fi
+  if [[ -f "${fixture}" ]]; then
+    cp "${fixture}" "${TEST_DIR}/${obj}"
+    return 0
+  fi
+  echo "missing source and fixture for ${obj}" >&2
+  return 1
 }
 
 run_linker() {
@@ -163,6 +175,7 @@ normalize_msg() {
   sed -E \
     -e 's/\r$//' \
     -e 's/^Error: //' \
+    -e 's#^ at [0-9A-Fa-f]{8} \((text|data|rdata|rldata)\)$# at <ADDR> (\1)#' \
     -e 's#(実行開始アドレスがファイル先頭ではありません:).*#\1 <PATH>#' \
     -e 's#(再配置テーブルが使われています:).*#\1 <PATH>#' \
     -e 's#(再配置対象が奇数アドレスにあります:).*#\1 <PATH>#' \
