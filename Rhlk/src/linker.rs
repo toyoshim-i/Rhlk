@@ -3,6 +3,7 @@ use crate::format::obj::parse_object;
 use crate::layout::plan_layout;
 use crate::resolver::resolve_object;
 use crate::writer::write_output;
+use std::path::Path;
 
 pub fn run(args: Args) -> anyhow::Result<()> {
     if args.inputs.is_empty() {
@@ -32,6 +33,21 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         }
     }
 
+    let mut start_seen = false;
+    for (idx, summary) in summaries.iter().enumerate() {
+        if summary.start_address.is_none() {
+            continue;
+        }
+        if start_seen {
+            let name = Path::new(&args.inputs[idx])
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&args.inputs[idx]);
+            anyhow::bail!("複数の実行開始アドレスを指定することはできません in {name}");
+        }
+        start_seen = true;
+    }
+
     let layout = plan_layout(&summaries);
     if args.verbose {
         println!("layout totals:");
@@ -53,6 +69,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
             args.omit_bss,
             args.make_mcs,
             &objects,
+            &args.inputs,
             &summaries,
             &layout,
         )?;

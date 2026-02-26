@@ -90,6 +90,7 @@ run_linker() {
   local -a cmd=("$@")
   local stdout_file="${out_prefix}.stdout"
   local stderr_file="${out_prefix}.stderr"
+  local msg_file="${out_prefix}.msg"
   local rc_file="${out_prefix}.rc"
 
   set +e
@@ -101,6 +102,7 @@ run_linker() {
   local rc=$?
   set -e
   echo "${rc}" >"${rc_file}"
+  cat "${stdout_file}" "${stderr_file}" >"${msg_file}"
   return 0
 }
 
@@ -110,14 +112,17 @@ compare_case() {
   local orig_prefix="${ARTIFACT_DIR}/orig/${name}"
   local rhlk_prefix="${ARTIFACT_DIR}/rhlk/${name}"
   local diff_file="${ARTIFACT_DIR}/diff/${name}.diff"
+  local orig_norm="${orig_prefix}.msg.norm"
+  local rhlk_norm="${rhlk_prefix}.msg.norm"
   : >"${diff_file}"
 
+  normalize_msg "${orig_prefix}.msg" "${orig_norm}" "orig"
+  normalize_msg "${rhlk_prefix}.msg" "${rhlk_norm}" "rhlk"
+
   local failed=0
-  if ! diff -u "${orig_prefix}.stdout" "${rhlk_prefix}.stdout" >>"${diff_file}" 2>&1; then
-    echo "[${name}] stdout differs" >>"${diff_file}"
-  fi
-  if ! diff -u "${orig_prefix}.stderr" "${rhlk_prefix}.stderr" >>"${diff_file}" 2>&1; then
-    echo "[${name}] stderr differs" >>"${diff_file}"
+  if ! diff -u "${orig_norm}" "${rhlk_norm}" >>"${diff_file}" 2>&1; then
+    echo "[${name}] merged message differs" >>"${diff_file}"
+    failed=1
   fi
   if ! diff -u "${orig_prefix}.rc" "${rhlk_prefix}.rc" >>"${diff_file}" 2>&1; then
     echo "[${name}] exit code differs" >>"${diff_file}"
@@ -143,6 +148,27 @@ compare_case() {
     echo "FAIL ${name} (see ${diff_file})"
   fi
   return "${failed}"
+}
+
+normalize_msg() {
+  local input="$1"
+  local output="$2"
+  local kind="$3"
+  local tmp="${output}.tmp"
+  if [[ "${kind}" == "orig" ]]; then
+    iconv -f SHIFT_JIS -t UTF-8 -c "${input}" >"${tmp}" || cp "${input}" "${tmp}"
+  else
+    cp "${input}" "${tmp}"
+  fi
+  sed -E \
+    -e 's/\r$//' \
+    -e 's/^Error: //' \
+    -e 's#(実行開始アドレスがファイル先頭ではありません:).*#\1 <PATH>#' \
+    -e 's#(再配置テーブルが使われています:).*#\1 <PATH>#' \
+    -e 's#(再配置対象が奇数アドレスにあります:).*#\1 <PATH>#' \
+    -e 's#(MACS形式ファイルではありません:).*#\1 <PATH>#' \
+    "${tmp}" >"${output}"
+  rm -f "${tmp}"
 }
 
 main() {

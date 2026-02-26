@@ -1,6 +1,9 @@
 use clap::Parser;
 
-fn main() -> anyhow::Result<()> {
+fn main() {
     let args = rhlk::cli::Args::parse();
-    rhlk::run(args)
+    if let Err(err) = rhlk::run(args) {
+        eprintln!("{err}");
+        std::process::exit(1);
+    }
 }

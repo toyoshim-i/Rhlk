@@ -13,19 +13,30 @@ pub fn write_output(
     omit_bss: bool,
     make_mcs: bool,
     objects: &[ObjectFile],
+    input_paths: &[String],
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
 ) -> Result<()> {
-    validate_link_inputs(objects, summaries)?;
+    validate_link_inputs(objects, input_paths, summaries)?;
 
     if r_format && !r_no_check {
-        validate_r_convertibility(objects, summaries, layout)?;
+        validate_r_convertibility(objects, summaries, layout, output_path)?;
     }
 
     let mut payload = if r_format {
         build_r_payload(objects, summaries, layout, omit_bss)?
     } else {
-        build_x_image(objects, summaries, layout)?
+        build_x_image(objects, summaries, layout).map_err(|err| {
+            let text = err.to_string();
+            if text.contains("relocation target address is odd") {
+                anyhow::anyhow!(
+                    "再配置対象が奇数アドレスにあります: {}",
+                    to_human68k_path(output_path)
+                )
+            } else {
+                err
+            }
+        })?
     };
 
     if make_mcs {
@@ -52,7 +63,12 @@ pub fn write_output(
                         .unwrap_or(0),
                 )
         };
-        patch_mcs_size(&mut payload, bss_extra)?;
+        patch_mcs_size(&mut payload, bss_extra).map_err(|_| {
+            anyhow::anyhow!(
+                "MACS形式ファイルではありません: {}",
+                to_human68k_path(output_path)
+            )
+        })?;
     }
     std::fs::write(output_path, payload).with_context(|| format!("failed to write {output_path}"))?;
     Ok(())
@@ -63,7 +79,6 @@ fn build_x_image(
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
 ) -> Result<Vec<u8>> {
-    validate_link_inputs(objects, summaries)?;
     if objects.len() != summaries.len() || objects.len() != layout.placements.len() {
         bail!("internal mismatch: objects/summaries/layout length differs");
     }
@@ -576,7 +591,6 @@ fn build_r_payload(
     layout: &LayoutPlan,
     omit_bss: bool,
 ) -> Result<Vec<u8>> {
-    validate_link_inputs(objects, summaries)?;
     let linked = link_initialized_sections(
         objects,
         summaries,
@@ -751,6 +765,7 @@ fn validate_r_convertibility(
     objects: &[ObjectFile],
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
+    output_path: &str,
 ) -> Result<()> {
     let text_size = layout
         .total_size_by_section
@@ -759,7 +774,10 @@ fn validate_r_convertibility(
         .unwrap_or(0);
     let reloc = build_relocation_table(objects, layout, text_size)?;
     if !reloc.is_empty() {
-        bail!("relocation table is used; use --rn to force .r output");
+        bail!(
+            "再配置テーブルが使われています: {}",
+            to_human68k_path(output_path)
+        );
     }
 
     let data_size = layout
@@ -788,9 +806,16 @@ fn validate_r_convertibility(
         );
     let exec = resolve_exec_address(summaries, text_size, data_size, bss_size)?.unwrap_or(0);
     if exec != 0 {
-        bail!("exec address is not file head; use --rn to force .r output");
+        bail!(
+            "実行開始アドレスがファイル先頭ではありません: {}",
+            to_human68k_path(output_path)
+        );
     }
     Ok(())
+}
+
+fn to_human68k_path(path: &str) -> String {
+    format!("A:{}", path.replace('/', "\\"))
 }
 
 fn collect_object_relocations(
@@ -842,7 +867,8 @@ fn collect_object_relocations(
 fn opaque_write_size(code: u16) -> u8 {
     let hi = (code >> 8) as u8;
     match hi {
-        0x40 | 0x43 | 0x50 | 0x53 | 0x57 | 0x6b | 0x90 | 0x93 => 1,
+        0x40 | 0x50 | 0x90 => 2,
+        0x43 | 0x53 | 0x57 | 0x6b | 0x93 => 1,
         0x41 | 0x45 | 0x51 | 0x55 | 0x65 | 0x69 | 0x91 | 0x99 => 2,
         0x42 | 0x46 | 0x52 | 0x56 | 0x6a | 0x92 | 0x96 | 0x9a => 4,
         _ => 0,
@@ -888,10 +914,10 @@ fn encode_relocation_offsets(offsets: &[u32]) -> Vec<u8> {
 
 fn patch_mcs_size(payload: &mut [u8], bss_size: u32) -> Result<()> {
     if payload.len() < 14 {
-        bail!("not MACS format: payload too small");
+        bail!("not MACS format");
     }
     if &payload[0..4] != b"MACS" || &payload[4..8] != b"DATA" {
-        bail!("not MACS format: missing MACS/DATA signature");
+        bail!("not MACS format");
     }
     let total_size = (payload.len() as u32).saturating_add(bss_size);
     put_u32_be(payload, 10, total_size);
@@ -952,40 +978,619 @@ fn resolve_exec_address(
     Ok(Some(base.saturating_add(addr)))
 }
 
-fn validate_link_inputs(objects: &[ObjectFile], summaries: &[ObjectSummary]) -> Result<()> {
-    validate_single_start_address(summaries)?;
-    validate_unsupported_expression_commands(objects)?;
-    Ok(())
+fn validate_link_inputs(
+    objects: &[ObjectFile],
+    input_paths: &[String],
+    summaries: &[ObjectSummary],
+) -> Result<()> {
+    validate_unsupported_expression_commands(objects, input_paths, summaries)
 }
 
-fn validate_single_start_address(summaries: &[ObjectSummary]) -> Result<()> {
-    let count = summaries.iter().filter(|s| s.start_address.is_some()).count();
-    if count > 1 {
-        bail!("multiple start addresses are specified");
+fn validate_unsupported_expression_commands(
+    objects: &[ObjectFile],
+    input_paths: &[String],
+    summaries: &[ObjectSummary],
+) -> Result<()> {
+    let mut global_symbols = HashMap::<Vec<u8>, Symbol>::new();
+    for summary in summaries {
+        for sym in &summary.symbols {
+            global_symbols.insert(sym.name.clone(), sym.clone());
+        }
     }
-    Ok(())
-}
 
-fn validate_unsupported_expression_commands(objects: &[ObjectFile]) -> Result<()> {
-    for (obj_idx, obj) in objects.iter().enumerate() {
+    let mut diagnostics = Vec::<String>::new();
+    for (obj_idx, (obj, summary)) in objects.iter().zip(summaries.iter()).enumerate() {
+        let obj_name = input_paths
+            .get(obj_idx)
+            .and_then(|p| std::path::Path::new(p).file_name())
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_owned())
+            .unwrap_or_else(|| format!("obj{obj_idx}.o"));
+        let mut current = SectionKind::Text;
+        let mut cursor_by_section = BTreeMap::<SectionKind, u32>::new();
+        let mut calc_stack = Vec::<ExprEntry>::new();
         for cmd in &obj.commands {
-            let Command::Opaque { code, .. } = cmd else {
-                continue;
-            };
-            let hi = (code >> 8) as u8;
-            let unsupported = matches!(
-                hi,
-                0x40 | 0x41 | 0x43 | 0x45 | 0x47 | 0x50 | 0x51 | 0x53 | 0x55 | 0x57
-                    | 0x65 | 0x69 | 0x6b | 0x90 | 0x91 | 0x93 | 0x99 | 0xa0
-            );
-            if unsupported {
-                bail!(
-                    "unsupported object command for expression/address evaluation: {code:#06x} (object {obj_idx})"
-                );
+            match cmd {
+                Command::ChangeSection { section } => {
+                    current = SectionKind::from_u8(*section);
+                }
+                Command::RawData(bytes) => {
+                    bump_cursor(&mut cursor_by_section, current, bytes.len() as u32);
+                }
+                Command::DefineSpace { size } => {
+                    bump_cursor(&mut cursor_by_section, current, *size);
+                }
+                Command::Opaque { code, .. } => {
+                    let local = cursor_by_section.get(&current).copied().unwrap_or(0);
+                    let messages = classify_expression_errors(
+                        *code,
+                        cmd,
+                        summary,
+                        &global_symbols,
+                        current,
+                        &mut calc_stack,
+                    );
+                    for msg in messages {
+                        diagnostics.push(format!("{msg} in {obj_name}\n at {local:08x} ({})", section_name(current)));
+                    }
+                    let write_size = opaque_write_size(*code) as u32;
+                    bump_cursor(&mut cursor_by_section, current, write_size);
+                }
+                _ => {}
             }
         }
     }
-    Ok(())
+    if diagnostics.is_empty() {
+        return Ok(());
+    }
+    bail!("{}", diagnostics.join("\n"));
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ExprEntry {
+    stat: i16,
+    value: i32,
+}
+
+fn classify_expression_errors(
+    code: u16,
+    cmd: &Command,
+    summary: &ObjectSummary,
+    global_symbols: &HashMap<Vec<u8>, Symbol>,
+    current: SectionKind,
+    calc_stack: &mut Vec<ExprEntry>,
+) -> Vec<&'static str> {
+    let hi = (code >> 8) as u8;
+    let lo = code as u8;
+    let payload = match cmd {
+        Command::Opaque { payload, .. } => payload.as_slice(),
+        _ => &[],
+    };
+    match hi {
+        0x80 => {
+            if let Some(entry) = evaluate_push_80(lo, payload, summary, global_symbols) {
+                calc_stack.push(entry);
+            }
+            Vec::new()
+        }
+        0xa0 => evaluate_a0(lo, calc_stack),
+        0x90 => evaluate_wrt_stk_9000(calc_stack),
+        0x91 => evaluate_wrt_stk_9100(calc_stack, current),
+        0x93 => evaluate_wrt_stk_9300(calc_stack),
+        0x99 => evaluate_wrt_stk_9900(calc_stack, current),
+        0x40 | 0x43 => evaluate_direct_byte(hi, lo, payload, summary, global_symbols),
+        0x50 | 0x53 => evaluate_direct_byte_with_offset(hi, lo, payload, summary, global_symbols),
+        0x41 => evaluate_direct_word(lo, payload, summary, global_symbols, current),
+        0x51 => evaluate_direct_word_with_offset(lo, payload, summary, global_symbols, current),
+        0x65 => evaluate_rel_word(lo, payload, summary, global_symbols),
+        0x6b => evaluate_rel_byte(lo, payload, summary, global_symbols),
+        _ => Vec::new(),
+    }
+}
+
+fn evaluate_push_80(
+    lo: u8,
+    payload: &[u8],
+    summary: &ObjectSummary,
+    global_symbols: &HashMap<Vec<u8>, Symbol>,
+) -> Option<ExprEntry> {
+    if matches!(lo, 0xfc..=0xff) {
+        let label_no = read_u16_be(payload)?;
+        let (section, value) = resolve_xref(label_no, summary, global_symbols)?;
+        let stat = match section_stat(section) {
+            0 => 0,
+            1 => 1,
+            _ => 2,
+        };
+        return Some(ExprEntry { stat, value });
+    }
+    if lo <= 0x0a {
+        let value = read_i32_be(payload)?;
+        let stat = match lo {
+            0x00 => 0,
+            0x01..=0x04 => 1,
+            _ => 2,
+        };
+        return Some(ExprEntry { stat, value });
+    }
+    None
+}
+
+fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
+    match lo {
+        0x01 | 0x03 | 0x04 | 0x05 | 0x06 | 0x07 => {
+            let Some(mut a) = calc_stack.pop() else {
+                return Vec::new();
+            };
+            if a.stat > 0 {
+                a.stat = -1;
+                calc_stack.push(a);
+                return vec!["不正な式"];
+            }
+            calc_stack.push(a);
+            Vec::new()
+        }
+        0x0a | 0x0b => {
+            let Some(a) = calc_stack.pop() else {
+                return Vec::new();
+            };
+            let Some(b) = calc_stack.pop() else {
+                calc_stack.push(a);
+                return Vec::new();
+            };
+            let (res, errors) = eval_chk_calcexp2(a, b);
+            if let Some(mut r) = res {
+                if r.stat >= 0 && a.value == 0 {
+                    r.stat = -1;
+                    calc_stack.push(r);
+                    let mut out = errors;
+                    out.push("ゼロ除算");
+                    return out;
+                }
+                calc_stack.push(r);
+            }
+            errors
+        }
+        0x0f => {
+            let Some(a) = calc_stack.pop() else {
+                return Vec::new();
+            };
+            let Some(b) = calc_stack.pop() else {
+                calc_stack.push(a);
+                return Vec::new();
+            };
+            let mut errors = Vec::new();
+            let mut out = ExprEntry {
+                stat: -1,
+                value: b.value.wrapping_sub(a.value),
+            };
+            if a.stat == 0 {
+                out.stat = b.stat ^ a.stat;
+            } else if a.stat < 0 || b.stat < 0 {
+                out.stat = -1;
+            } else if a.stat != b.stat {
+                errors.push("不正な式");
+            } else {
+                out.stat = b.stat ^ a.stat;
+            }
+            calc_stack.push(out);
+            errors
+        }
+        0x10 => {
+            let Some(a) = calc_stack.pop() else {
+                return Vec::new();
+            };
+            let Some(b) = calc_stack.pop() else {
+                calc_stack.push(a);
+                return Vec::new();
+            };
+            let mut errors = Vec::new();
+            let mut out = ExprEntry {
+                stat: -1,
+                value: b.value.wrapping_add(a.value),
+            };
+            if a.stat == 0 {
+                out.stat = b.stat ^ a.stat;
+            } else if a.stat < 0 {
+                out.stat = -1;
+            } else if b.stat == 0 {
+                out.stat = b.stat ^ a.stat;
+            } else {
+                if b.stat >= 0 {
+                    errors.push("不正な式");
+                }
+                out.stat = -1;
+            }
+            calc_stack.push(out);
+            errors
+        }
+        0x09 | 0x0c | 0x0d | 0x0e | 0x11..=0x1d => {
+            let Some(a) = calc_stack.pop() else {
+                return Vec::new();
+            };
+            let Some(b) = calc_stack.pop() else {
+                calc_stack.push(a);
+                return Vec::new();
+            };
+            let (res, errors) = eval_chk_calcexp2(a, b);
+            if let Some(r) = res {
+                calc_stack.push(r);
+            }
+            errors
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn eval_chk_calcexp2(a: ExprEntry, b: ExprEntry) -> (Option<ExprEntry>, Vec<&'static str>) {
+    let mut errors = Vec::new();
+    let mut stat = 0;
+    if a.stat != 0 {
+        if a.stat > 0 {
+            errors.push("不正な式");
+        }
+        stat = -1;
+    } else if b.stat != 0 {
+        if b.stat > 0 {
+            errors.push("不正な式");
+        }
+        stat = -1;
+    }
+    (
+        Some(ExprEntry {
+            stat,
+            value: b.value,
+        }),
+        errors,
+    )
+}
+
+fn evaluate_wrt_stk_9000(calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
+    evaluate_wrt_stk_byte(calc_stack)
+}
+
+fn evaluate_wrt_stk_9300(calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
+    evaluate_wrt_stk_byte(calc_stack)
+}
+
+fn evaluate_wrt_stk_byte(calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
+    let Some(v) = calc_stack.pop() else {
+        return Vec::new();
+    };
+    if v.stat == 0 {
+        if !fits_byte(v.value) {
+            return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
+        }
+        return Vec::new();
+    }
+    if v.stat < 0 {
+        return Vec::new();
+    }
+    vec!["アドレス属性シンボルの値をバイトサイズで出力"]
+}
+
+fn evaluate_wrt_stk_9100(calc_stack: &mut Vec<ExprEntry>, current: SectionKind) -> Vec<&'static str> {
+    let Some(v) = calc_stack.pop() else {
+        return Vec::new();
+    };
+    if v.stat == 0 {
+        if !fits_word(v.value) {
+            return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
+        }
+        return Vec::new();
+    }
+    if v.stat < 0 {
+        return Vec::new();
+    }
+    if v.stat == 1 {
+        return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+    }
+    if section_number(current) <= 4 {
+        if !fits_word2(v.value) {
+            return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
+        }
+        return Vec::new();
+    }
+    vec!["アドレス属性シンボルの値をワードサイズで出力"]
+}
+
+fn evaluate_wrt_stk_9900(calc_stack: &mut Vec<ExprEntry>, current: SectionKind) -> Vec<&'static str> {
+    let Some(v) = calc_stack.pop() else {
+        return Vec::new();
+    };
+    if v.stat == 0 {
+        if !fits_word2(v.value) {
+            return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
+        }
+        return Vec::new();
+    }
+    if v.stat < 0 {
+        return Vec::new();
+    }
+    if v.stat == 1 || section_number(current) > 4 {
+        return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+    }
+    if !fits_word2(v.value) {
+        return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
+    }
+    Vec::new()
+}
+
+fn evaluate_direct_byte(
+    _hi: u8,
+    lo: u8,
+    payload: &[u8],
+    summary: &ObjectSummary,
+    global_symbols: &HashMap<Vec<u8>, Symbol>,
+) -> Vec<&'static str> {
+    if matches!(lo, 0xfc..=0xff) {
+        if lo != 0xff {
+            return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
+        }
+        let Some(label_no) = read_u16_be(payload) else {
+            return Vec::new();
+        };
+        if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
+            if section_stat(section) != 0 {
+                return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
+            }
+            if !fits_byte(value) {
+                return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
+            }
+        }
+        return Vec::new();
+    }
+    let Some(value) = read_i32_be(payload) else {
+        return Vec::new();
+    };
+    if !fits_byte(value) {
+        return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
+    }
+    Vec::new()
+}
+
+fn evaluate_direct_byte_with_offset(
+    _hi: u8,
+    lo: u8,
+    payload: &[u8],
+    summary: &ObjectSummary,
+    global_symbols: &HashMap<Vec<u8>, Symbol>,
+) -> Vec<&'static str> {
+    if matches!(lo, 0xfc..=0xff) {
+        if lo != 0xff {
+            return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
+        }
+        let Some(label_no) = read_u16_be(payload) else {
+            return Vec::new();
+        };
+        let offset = read_i32_be(&payload[2..]).unwrap_or(0);
+        if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
+            let total = value.wrapping_add(offset);
+            if section_stat(section) != 0 {
+                return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
+            }
+            if !fits_byte(total) {
+                return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
+            }
+        }
+        return Vec::new();
+    }
+    let Some(value) = read_i32_be(payload) else {
+        return Vec::new();
+    };
+    let offset = read_i32_be(&payload[4..]).unwrap_or(0);
+    if !fits_byte(value.wrapping_add(offset)) {
+        return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
+    }
+    Vec::new()
+}
+
+fn evaluate_direct_word(
+    lo: u8,
+    payload: &[u8],
+    summary: &ObjectSummary,
+    global_symbols: &HashMap<Vec<u8>, Symbol>,
+    current: SectionKind,
+) -> Vec<&'static str> {
+    if matches!(lo, 0xfc..=0xff) {
+        if lo != 0xff {
+            return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+        }
+        let Some(label_no) = read_u16_be(payload) else {
+            return Vec::new();
+        };
+        if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
+            let stat = section_stat(section);
+            if stat == 0 {
+                if !fits_word(value) {
+                    return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
+                }
+                return Vec::new();
+            }
+            if stat == 1 {
+                return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+            }
+            if section_number(current) <= 4 {
+                if !fits_word2(value) {
+                    return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
+                }
+                return Vec::new();
+            }
+            return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+        }
+        return Vec::new();
+    }
+    let Some(value) = read_i32_be(payload) else {
+        return Vec::new();
+    };
+    if !fits_word(value) {
+        return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
+    }
+    Vec::new()
+}
+
+fn evaluate_direct_word_with_offset(
+    lo: u8,
+    payload: &[u8],
+    summary: &ObjectSummary,
+    global_symbols: &HashMap<Vec<u8>, Symbol>,
+    current: SectionKind,
+) -> Vec<&'static str> {
+    if matches!(lo, 0xfc..=0xff) {
+        if lo != 0xff {
+            return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+        }
+        let Some(label_no) = read_u16_be(payload) else {
+            return Vec::new();
+        };
+        let offset = read_i32_be(&payload[2..]).unwrap_or(0);
+        if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
+            let total = value.wrapping_add(offset);
+            let stat = section_stat(section);
+            if stat == 0 {
+                if !fits_word(total) {
+                    return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
+                }
+                return Vec::new();
+            }
+            if stat == 1 {
+                return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+            }
+            if section_number(current) <= 4 {
+                if !fits_word2(total) {
+                    return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
+                }
+                return Vec::new();
+            }
+            return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+        }
+        return Vec::new();
+    }
+    let Some(value) = read_i32_be(payload) else {
+        return Vec::new();
+    };
+    let offset = read_i32_be(&payload[4..]).unwrap_or(0);
+    if !fits_word(value.wrapping_add(offset)) {
+        return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
+    }
+    Vec::new()
+}
+
+fn resolve_xref(
+    label_no: u16,
+    summary: &ObjectSummary,
+    global_symbols: &HashMap<Vec<u8>, Symbol>,
+) -> Option<(SectionKind, i32)> {
+    let xref = summary
+        .xrefs
+        .iter()
+        .find(|x| x.value == label_no as u32)?;
+    let target = global_symbols.get(&xref.name)?;
+    Some((target.section, target.value as i32))
+}
+
+fn evaluate_rel_word(
+    _lo: u8,
+    payload: &[u8],
+    summary: &ObjectSummary,
+    global_symbols: &HashMap<Vec<u8>, Symbol>,
+) -> Vec<&'static str> {
+    let Some(label_no) = read_u16_be(payload.get(4..).unwrap_or(&[])) else {
+        return Vec::new();
+    };
+    if let Some((section, _)) = resolve_xref(label_no, summary, global_symbols) {
+        if section_stat(section) == 0 {
+            return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+        }
+    }
+    vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"]
+}
+
+fn evaluate_rel_byte(
+    _lo: u8,
+    payload: &[u8],
+    summary: &ObjectSummary,
+    global_symbols: &HashMap<Vec<u8>, Symbol>,
+) -> Vec<&'static str> {
+    let Some(label_no) = read_u16_be(payload.get(4..).unwrap_or(&[])) else {
+        return Vec::new();
+    };
+    if let Some((section, _)) = resolve_xref(label_no, summary, global_symbols) {
+        if section_stat(section) == 0 {
+            return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
+        }
+    }
+    vec!["バイトサイズ(-$80〜$7f)で表現できない値"]
+}
+
+fn section_stat(section: SectionKind) -> i16 {
+    match section {
+        SectionKind::Abs => 0,
+        SectionKind::Text
+        | SectionKind::Data
+        | SectionKind::Bss
+        | SectionKind::Stack
+        | SectionKind::Common => 1,
+        _ => 2,
+    }
+}
+
+fn section_number(section: SectionKind) -> u8 {
+    match section {
+        SectionKind::Text => 1,
+        SectionKind::Data => 2,
+        SectionKind::Bss => 3,
+        SectionKind::Stack => 4,
+        SectionKind::RData => 5,
+        SectionKind::RBss => 6,
+        SectionKind::RStack => 7,
+        SectionKind::RLData => 8,
+        SectionKind::RLBss => 9,
+        SectionKind::RLStack => 10,
+        _ => 0,
+    }
+}
+
+fn read_u16_be(bytes: &[u8]) -> Option<u16> {
+    if bytes.len() < 2 {
+        return None;
+    }
+    Some(u16::from_be_bytes([bytes[0], bytes[1]]))
+}
+
+fn read_i32_be(bytes: &[u8]) -> Option<i32> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    Some(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn fits_byte(v: i32) -> bool {
+    (-0x80..=0xff).contains(&v)
+}
+
+fn fits_word(v: i32) -> bool {
+    (-0x8000..=0xffff).contains(&v)
+}
+
+fn fits_word2(v: i32) -> bool {
+    (-0x8000..=0x7fff).contains(&v)
+}
+
+fn section_name(section: SectionKind) -> &'static str {
+    match section {
+        SectionKind::Text => "text",
+        SectionKind::Data => "data",
+        SectionKind::Bss => "bss",
+        SectionKind::Stack => "stack",
+        SectionKind::RData => "rdata",
+        SectionKind::RBss => "rbss",
+        SectionKind::RStack => "rstack",
+        SectionKind::RLData => "rldata",
+        SectionKind::RLBss => "rlbss",
+        SectionKind::RLStack => "rlstack",
+        _ => "abs",
+    }
 }
 
 fn put_u32_be(buf: &mut [u8], at: usize, v: u32) {
@@ -1000,7 +1605,9 @@ mod tests {
     use crate::format::obj::{Command, ObjectFile};
     use crate::layout::plan_layout;
     use crate::resolver::{ObjectSummary, SectionKind, Symbol};
-    use crate::writer::{build_r_payload, build_x_image, validate_r_convertibility};
+    use crate::writer::{
+        build_r_payload, build_x_image, validate_link_inputs, validate_r_convertibility,
+    };
 
     #[test]
     fn builds_r_payload_from_layouted_sections() {
@@ -1204,9 +1811,9 @@ mod tests {
         };
         let sum = mk_summary(2, 4, 0);
         let layout = plan_layout(&[sum.clone()]);
-        let err =
-            validate_r_convertibility(&[obj], &[sum], &layout).expect_err("should reject conversion");
-        assert!(err.to_string().contains("relocation table is used"));
+        let err = validate_r_convertibility(&[obj], &[sum], &layout, "out.r")
+            .expect_err("should reject conversion");
+        assert!(err.to_string().contains("再配置テーブルが使われています"));
     }
 
     #[test]
@@ -1229,9 +1836,9 @@ mod tests {
         let mut sum = mk_summary(2, 2, 0);
         sum.start_address = Some((0x02, 1));
         let layout = plan_layout(&[sum.clone()]);
-        let err =
-            validate_r_convertibility(&[obj], &[sum], &layout).expect_err("should reject conversion");
-        assert!(err.to_string().contains("exec address is not file head"));
+        let err = validate_r_convertibility(&[obj], &[sum], &layout, "out.r")
+            .expect_err("should reject conversion");
+        assert!(err.to_string().contains("実行開始アドレスがファイル先頭ではありません"));
     }
 
     #[test]
@@ -1292,6 +1899,10 @@ mod tests {
                     name: b"text".to_vec(),
                 },
                 Command::Opaque {
+                    code: 0x8001,
+                    payload: vec![0, 0, 0, 0],
+                },
+                Command::Opaque {
                     code: 0xa001,
                     payload: Vec::new(),
                 },
@@ -1299,13 +1910,9 @@ mod tests {
             ],
             scd_tail: Vec::new(),
         };
-        let sum = mk_summary(2, 0, 0);
-        let layout = plan_layout(&[sum.clone()]);
         let err =
-            build_x_image(&[obj], &[sum], &layout).expect_err("must reject expression command");
-        assert!(err
-            .to_string()
-            .contains("unsupported object command for expression/address evaluation"));
+            validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)]).expect_err("must reject expression command");
+        assert!(err.to_string().contains("不正な式"));
     }
 
     #[test]

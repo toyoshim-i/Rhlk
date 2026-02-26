@@ -4,11 +4,14 @@
 オリジナル HLK と rhlk の挙動差分を、既存 `external/hlkx/tests` を使って継続検出する。
 
 比較対象:
+- メッセージ出力（`stdout` + `stderr` を結合したストリーム）
 - 終了コード
 - 生成物バイナリ (`.x` / `.r`)
 
 補足:
-- `stdout/stderr` は差分ログには残すが、現時点では判定対象外とする。
+- 出力チャネルの違い（`stdout` vs `stderr`）は無視し、結合後の文字列を比較する。
+- オリジナル HLK 側メッセージは `Shift_JIS` を `UTF-8` に正規化して比較する。
+- パスを含む一部エラーメッセージは、比較時にパス部分を `<PATH>` に正規化する。
 
 ## 追加ファイル
 - `tools/run_hlkx_regression.sh`
@@ -87,6 +90,10 @@ RHLK_CMD="cargo run --manifest-path /abs/path/Rhlk/Cargo.toml --quiet --" \
 2. `flags` (`-r` など)
 3. `objects`（空白区切り）
 4. `output_ext`（`x` または `r`）
+
+## 現在の一致状況 (2026-02-27)
+- 9/9 ケース一致（`adrs_not_long`, `div_zero`, `dup_entry`, `exp`, `overflow`, `reltbl_odd`, `r_entry`, `r_reltbl`, `makemcs_not_mcs`）
+- メッセージ比較は `stdout+stderr` 結合後に文字コード・パス正規化を適用して実施
 
 ## run68 の取り込み
 `run68` 自体をリポジトリ参照したい場合は、必要に応じて `external/` 配下へ submodule 追加する。
