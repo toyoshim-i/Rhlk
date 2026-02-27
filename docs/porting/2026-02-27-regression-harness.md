@@ -99,6 +99,8 @@ RHLK_CMD="cargo run --manifest-path /abs/path/Rhlk/Cargo.toml --quiet --" \
 ## 現在の一致状況 (2026-02-27)
 - map 比較ケースを含めて全ケース一致（`map_xdef`, `map_d32_adrs` を含む）
 - メッセージ比較は `stdout+stderr` 結合後に文字コード・パス正規化を適用して実施
+- 基本オプション互換ケースも一致:
+  - `-x`, `-b`, `-g`, `-0`, `-an`, `-w`
 
 ## run68 の取り込み
 `run68` 自体をリポジトリ参照したい場合は、必要に応じて `external/` 配下へ submodule 追加する。
