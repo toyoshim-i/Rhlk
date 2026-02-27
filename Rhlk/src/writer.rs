@@ -1094,6 +1094,40 @@ struct GlobalSymbolAddr {
     addr: u32,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ExprEntry {
+    stat: i16,
+    value: i32,
+}
+
+fn walk_opaque_commands<F>(obj: &ObjectFile, mut on_opaque: F)
+where
+    F: FnMut(&Command, SectionKind, u32, &mut Vec<ExprEntry>),
+{
+    let mut current = SectionKind::Text;
+    let mut cursor_by_section = BTreeMap::<SectionKind, u32>::new();
+    let mut calc_stack = Vec::<ExprEntry>::new();
+    for cmd in &obj.commands {
+        match cmd {
+            Command::ChangeSection { section } => {
+                current = SectionKind::from_u8(*section);
+            }
+            Command::RawData(bytes) => {
+                bump_cursor(&mut cursor_by_section, current, bytes.len() as u32);
+            }
+            Command::DefineSpace { size } => {
+                bump_cursor(&mut cursor_by_section, current, *size);
+            }
+            Command::Opaque { code, .. } => {
+                let local = cursor_by_section.get(&current).copied().unwrap_or(0);
+                on_opaque(cmd, current, local, &mut calc_stack);
+                bump_cursor(&mut cursor_by_section, current, opaque_write_size(*code) as u32);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn build_global_symbol_addrs(
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
@@ -1151,64 +1185,46 @@ fn patch_opaque_commands(
     global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
 ) -> Result<()> {
     for (idx, (obj, summary)) in objects.iter().zip(summaries.iter()).enumerate() {
-        let mut current = SectionKind::Text;
-        let mut cursor_by_section = BTreeMap::<SectionKind, u32>::new();
-        let mut calc_stack = Vec::<ExprEntry>::new();
-        for cmd in &obj.commands {
-            match cmd {
-                Command::ChangeSection { section } => {
-                    current = SectionKind::from_u8(*section);
+        walk_opaque_commands(obj, |cmd, current, local, calc_stack| {
+            let Command::Opaque { code, payload } = cmd else {
+                return;
+            };
+            let hi = (*code >> 8) as u8;
+            let lo = *code as u8;
+            if hi == 0x80 {
+                if let Some(entry) =
+                    evaluate_push_80_for_patch(lo, payload, summary, global_symbol_addrs)
+                {
+                    calc_stack.push(entry);
                 }
-                Command::RawData(bytes) => {
-                    bump_cursor(&mut cursor_by_section, current, bytes.len() as u32);
-                }
-                Command::DefineSpace { size } => {
-                    bump_cursor(&mut cursor_by_section, current, *size);
-                }
-                Command::Opaque { code, payload } => {
-                    let hi = (*code >> 8) as u8;
-                    let lo = *code as u8;
-                    if hi == 0x80 {
-                        if let Some(entry) =
-                            evaluate_push_80_for_patch(lo, payload, summary, global_symbol_addrs)
-                        {
-                            calc_stack.push(entry);
-                        }
-                    } else if hi == 0xa0 {
-                        let _ = evaluate_a0(lo, &mut calc_stack);
-                    }
-                    let local = cursor_by_section.get(&current).copied().unwrap_or(0);
-                    if let Some(bytes) =
-                        materialize_stack_write_opaque(*code, &mut calc_stack).or_else(|| {
-                            materialize_opaque(
-                                *code,
-                                payload,
-                                summary,
-                                global_symbol_addrs,
-                                &layout.placements[idx].by_section,
-                            )
-                        })
-                            .and_then(|v| if is_initialized_section(current) { Some(v) } else { None })
-                    {
-                        let Some(start) = layout.placements[idx].by_section.get(&current).copied() else {
-                            bump_cursor(&mut cursor_by_section, current, opaque_write_size(*code) as u32);
-                            continue;
-                        };
-                        let Some(target) = linked.get_mut(&current) else {
-                            bump_cursor(&mut cursor_by_section, current, opaque_write_size(*code) as u32);
-                            continue;
-                        };
-                        let begin = (start.saturating_add(local)) as usize;
-                        let end = begin.saturating_add(bytes.len());
-                        if end <= target.len() {
-                            target[begin..end].copy_from_slice(&bytes);
-                        }
-                    }
-                    bump_cursor(&mut cursor_by_section, current, opaque_write_size(*code) as u32);
-                }
-                _ => {}
+            } else if hi == 0xa0 {
+                let _ = evaluate_a0(lo, calc_stack);
             }
-        }
+            if let Some(bytes) =
+                materialize_stack_write_opaque(*code, calc_stack).or_else(|| {
+                    materialize_opaque(
+                        *code,
+                        payload,
+                        summary,
+                        global_symbol_addrs,
+                        &layout.placements[idx].by_section,
+                    )
+                })
+                .and_then(|v| if is_initialized_section(current) { Some(v) } else { None })
+            {
+                let Some(start) = layout.placements[idx].by_section.get(&current).copied() else {
+                    return;
+                };
+                let Some(target) = linked.get_mut(&current) else {
+                    return;
+                };
+                let begin = (start.saturating_add(local)) as usize;
+                let end = begin.saturating_add(bytes.len());
+                if end <= target.len() {
+                    target[begin..end].copy_from_slice(&bytes);
+                }
+            }
+        });
     }
     Ok(())
 }
@@ -1487,9 +1503,6 @@ fn validate_unsupported_expression_commands(
             .and_then(|s| s.to_str())
             .map(|s| s.to_owned())
             .unwrap_or_else(|| format!("obj{obj_idx}.o"));
-        let mut current = SectionKind::Text;
-        let mut cursor_by_section = BTreeMap::<SectionKind, u32>::new();
-        let mut calc_stack = Vec::<ExprEntry>::new();
         let mut has_ctor = false;
         let mut has_dtor = false;
         let mut has_doctor = false;
@@ -1505,47 +1518,41 @@ fn validate_unsupported_expression_commands(
                     0x0d => dtor_header_size = Some(*size),
                     _ => {}
                 },
-                Command::ChangeSection { section } => {
-                    current = SectionKind::from_u8(*section);
-                }
-                Command::RawData(bytes) => {
-                    bump_cursor(&mut cursor_by_section, current, bytes.len() as u32);
-                }
-                Command::DefineSpace { size } => {
-                    bump_cursor(&mut cursor_by_section, current, *size);
-                }
-                Command::Opaque { code, .. } => {
-                    match *code {
-                        0x4c01 => {
-                            has_ctor = true;
-                            ctor_count += 1;
-                        }
-                        0x4d01 => {
-                            has_dtor = true;
-                            dtor_count += 1;
-                        }
-                        0xe00c => has_doctor = true,
-                        0xe00d => has_dodtor = true,
-                        _ => {}
-                    }
-                    let local = cursor_by_section.get(&current).copied().unwrap_or(0);
-                    let messages = classify_expression_errors(
-                        *code,
-                        cmd,
-                        summary,
-                        &global_symbols,
-                        current,
-                        &mut calc_stack,
-                    );
-                    for msg in messages {
-                        diagnostics.push(format!("{msg} in {obj_name}\n at {local:08x} ({})", section_name(current)));
-                    }
-                    let write_size = opaque_write_size(*code) as u32;
-                    bump_cursor(&mut cursor_by_section, current, write_size);
-                }
                 _ => {}
             }
         }
+        walk_opaque_commands(obj, |cmd, current, local, calc_stack| {
+            let Command::Opaque { code, .. } = cmd else {
+                return;
+            };
+            match *code {
+                0x4c01 => {
+                    has_ctor = true;
+                    ctor_count += 1;
+                }
+                0x4d01 => {
+                    has_dtor = true;
+                    dtor_count += 1;
+                }
+                0xe00c => has_doctor = true,
+                0xe00d => has_dodtor = true,
+                _ => {}
+            }
+            let messages = classify_expression_errors(
+                *code,
+                cmd,
+                summary,
+                &global_symbols,
+                current,
+                calc_stack,
+            );
+            for msg in messages {
+                diagnostics.push(format!(
+                    "{msg} in {obj_name}\n at {local:08x} ({})",
+                    section_name(current)
+                ));
+            }
+        });
         if !g2lk_mode {
             if has_ctor || has_dtor || has_doctor || has_dodtor {
                 diagnostics.push(format!(
@@ -1581,12 +1588,6 @@ fn validate_unsupported_expression_commands(
         return Ok(());
     }
     bail!("{}", diagnostics.join("\n"));
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ExprEntry {
-    stat: i16,
-    value: i32,
 }
 
 fn classify_expression_errors(
