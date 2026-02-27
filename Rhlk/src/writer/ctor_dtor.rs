@@ -7,6 +7,7 @@ use crate::layout::LayoutPlan;
 use crate::resolver::SectionKind;
 
 use super::GlobalSymbolAddr;
+use super::opcode;
 
 pub(super) fn patch_ctor_dtor_tables(
     linked: &mut BTreeMap<SectionKind, Vec<u8>>,
@@ -34,8 +35,8 @@ pub(super) fn patch_ctor_dtor_tables(
                 continue;
             };
             match *code {
-                0x4c01 => ctor_entries.push(text_base.saturating_add(v)),
-                0x4d01 => dtor_entries.push(text_base.saturating_add(v)),
+                opcode::OP_CTOR_ENTRY => ctor_entries.push(text_base.saturating_add(v)),
+                opcode::OP_DTOR_ENTRY => dtor_entries.push(text_base.saturating_add(v)),
                 _ => {}
             }
         }

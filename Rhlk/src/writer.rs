@@ -13,6 +13,7 @@ pub use map::write_map;
 #[cfg(test)]
 pub(crate) use map::build_map_text;
 mod ctor_dtor;
+mod opcode;
 
 #[derive(Debug, Error)]
 enum WriterError {
@@ -1076,10 +1077,10 @@ fn collect_object_relocations(
 fn opaque_write_size(code: u16) -> u8 {
     let hi = (code >> 8) as u8;
     match hi {
-        0x40 | 0x50 | 0x90 => 2,
-        0x43 | 0x53 | 0x57 | 0x6b | 0x93 => 1,
-        0x41 | 0x45 | 0x51 | 0x55 | 0x65 | 0x69 | 0x91 | 0x99 => 2,
-        0x42 | 0x46 | 0x52 | 0x56 | 0x6a | 0x92 | 0x96 | 0x9a => 4,
+        0x40 | 0x50 | opcode::OPH_WRT_STK_BYTE => 2,
+        0x43 | 0x53 | 0x57 | 0x6b | opcode::OPH_WRT_STK_BYTE_RAW => 1,
+        0x41 | 0x45 | 0x51 | 0x55 | 0x65 | 0x69 | opcode::OPH_WRT_STK_WORD_TEXT | opcode::OPH_WRT_STK_WORD_RELOC => 2,
+        0x42 | 0x46 | 0x52 | 0x56 | 0x6a | opcode::OPH_WRT_STK_LONG | opcode::OPH_WRT_STK_LONG_ALT | opcode::OPH_WRT_STK_LONG_RELOC => 4,
         _ => 0,
     }
 }
@@ -1232,14 +1233,24 @@ fn patch_opaque_commands(
 fn materialize_stack_write_opaque(code: u16, calc_stack: &mut Vec<ExprEntry>) -> Option<Vec<u8>> {
     let hi = (code >> 8) as u8;
     let v = match hi {
-        0x90 | 0x91 | 0x92 | 0x93 | 0x96 | 0x99 | 0x9a => calc_stack.pop()?,
+        opcode::OPH_WRT_STK_BYTE
+        | opcode::OPH_WRT_STK_WORD_TEXT
+        | opcode::OPH_WRT_STK_LONG
+        | opcode::OPH_WRT_STK_BYTE_RAW
+        | opcode::OPH_WRT_STK_LONG_ALT
+        | opcode::OPH_WRT_STK_WORD_RELOC
+        | opcode::OPH_WRT_STK_LONG_RELOC => calc_stack.pop()?,
         _ => return None,
     };
     let out = match hi {
-        0x90 => vec![0x00, v.value as u8],
-        0x93 => vec![v.value as u8],
-        0x91 | 0x99 => (v.value as u16).to_be_bytes().to_vec(),
-        0x92 | 0x96 | 0x9a => (v.value as u32).to_be_bytes().to_vec(),
+        opcode::OPH_WRT_STK_BYTE => vec![0x00, v.value as u8],
+        opcode::OPH_WRT_STK_BYTE_RAW => vec![v.value as u8],
+        opcode::OPH_WRT_STK_WORD_TEXT | opcode::OPH_WRT_STK_WORD_RELOC => {
+            (v.value as u16).to_be_bytes().to_vec()
+        }
+        opcode::OPH_WRT_STK_LONG | opcode::OPH_WRT_STK_LONG_ALT | opcode::OPH_WRT_STK_LONG_RELOC => {
+            (v.value as u32).to_be_bytes().to_vec()
+        }
         _ => return None,
     };
     Some(out)
@@ -1526,16 +1537,16 @@ fn validate_unsupported_expression_commands(
                 return;
             };
             match *code {
-                0x4c01 => {
+                opcode::OP_CTOR_ENTRY => {
                     has_ctor = true;
                     ctor_count += 1;
                 }
-                0x4d01 => {
+                opcode::OP_DTOR_ENTRY => {
                     has_dtor = true;
                     dtor_count += 1;
                 }
-                0xe00c => has_doctor = true,
-                0xe00d => has_dodtor = true,
+                opcode::OP_DOCTOR => has_doctor = true,
+                opcode::OP_DODTOR => has_dodtor = true,
                 _ => {}
             }
             let messages = classify_expression_errors(
@@ -1616,13 +1627,13 @@ fn classify_expression_errors(
             Vec::new()
         }
         0xa0 => evaluate_a0(lo, calc_stack),
-        0x90 => evaluate_wrt_stk_9000(calc_stack),
-        0x91 => evaluate_wrt_stk_9100(calc_stack, current),
-        0x92 => evaluate_wrt_stk_long(calc_stack),
-        0x93 => evaluate_wrt_stk_9300(calc_stack),
-        0x96 => evaluate_wrt_stk_long(calc_stack),
-        0x99 => evaluate_wrt_stk_9900(calc_stack, current),
-        0x9a => evaluate_wrt_stk_long(calc_stack),
+        opcode::OPH_WRT_STK_BYTE => evaluate_wrt_stk_9000(calc_stack),
+        opcode::OPH_WRT_STK_WORD_TEXT => evaluate_wrt_stk_9100(calc_stack, current),
+        opcode::OPH_WRT_STK_LONG => evaluate_wrt_stk_long(calc_stack),
+        opcode::OPH_WRT_STK_BYTE_RAW => evaluate_wrt_stk_9300(calc_stack),
+        opcode::OPH_WRT_STK_LONG_ALT => evaluate_wrt_stk_long(calc_stack),
+        opcode::OPH_WRT_STK_WORD_RELOC => evaluate_wrt_stk_9900(calc_stack, current),
+        opcode::OPH_WRT_STK_LONG_RELOC => evaluate_wrt_stk_long(calc_stack),
         0x40 | 0x43 => evaluate_direct_byte(hi, lo, payload, summary, global_symbols),
         0x50 | 0x53 => evaluate_direct_byte_with_offset(hi, lo, payload, summary, global_symbols),
         0x41 => evaluate_direct_word(lo, payload, summary, global_symbols, current),
