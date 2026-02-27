@@ -161,7 +161,7 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
     if runtime.verbose {
         println!("wrote output: {}", output.display());
     }
-    if let Some(map_output) = resolve_map_output(args.map.as_ref(), Some(output.as_path()), &expanded_inputs) {
+    if let Some(map_output) = resolve_map_output(args.map.as_deref(), Some(output.as_path()), &expanded_inputs) {
         let map_output_s = map_output.to_string_lossy().to_string();
         write_map(&output_s, &map_output_s, &summaries, &layout, &input_names)?;
         if runtime.verbose {
@@ -464,7 +464,7 @@ fn resolve_output_path(args: &Args, inputs: &[String]) -> PathBuf {
 }
 
 fn resolve_map_output(
-    map_opt: Option<&String>,
+    map_opt: Option<&str>,
     output_opt: Option<&Path>,
     inputs: &[String],
 ) -> Option<PathBuf> {
@@ -1410,16 +1410,13 @@ mod tests {
 
     #[test]
     fn resolves_map_output_name() {
-        let empty = String::new();
-        let foo = "foo".to_string();
-        let foo_txt = "foo.txt".to_string();
-        let o = resolve_map_output(Some(&empty), Some(Path::new("out.x")), &["in.o".to_string()]);
+        let o = resolve_map_output(Some(""), Some(Path::new("out.x")), &["in.o".to_string()]);
         assert_eq!(o, Some(PathBuf::from("out.map")));
-        let i = resolve_map_output(Some(&empty), None, &["src/main.o".to_string()]);
+        let i = resolve_map_output(Some(""), None, &["src/main.o".to_string()]);
         assert_eq!(i, Some(PathBuf::from("src/main.map")));
-        let n = resolve_map_output(Some(&foo), None, &[]);
+        let n = resolve_map_output(Some("foo"), None, &[]);
         assert_eq!(n, Some(PathBuf::from("foo.map")));
-        let e = resolve_map_output(Some(&foo_txt), None, &[]);
+        let e = resolve_map_output(Some("foo.txt"), None, &[]);
         assert_eq!(e, Some(PathBuf::from("foo.txt")));
     }
 
