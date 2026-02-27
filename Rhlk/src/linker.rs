@@ -15,8 +15,21 @@ pub fn run(args: Args) -> anyhow::Result<()> {
     if args.title {
         println!("rhlk {}", env!("CARGO_PKG_VERSION"));
     }
+    if let Some(align) = args.align {
+        if !(2..=256).contains(&align) || !align.is_power_of_two() {
+            anyhow::bail!("align size must be power of two in [2, 256]: {align}");
+        }
+    }
 
-    let (objects, summaries, input_names) = load_objects_with_requests(&args.inputs, args.verbose)?;
+    let (objects, mut summaries, input_names) = load_objects_with_requests(&args.inputs, args.verbose)?;
+    if let Some(align) = args.align {
+        for s in &mut summaries {
+            // Apply global default align only to objects that still have the default value.
+            if s.object_align == 2 {
+                s.object_align = align;
+            }
+        }
+    }
     validate_unresolved_symbols(&summaries, &input_names)?;
 
     let mut start_seen = false;
@@ -976,6 +989,7 @@ mod tests {
             r_no_check: false,
             no_x_ext: false,
             opt_an: false,
+            align: None,
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
@@ -1021,6 +1035,7 @@ mod tests {
             r_no_check: false,
             no_x_ext: false,
             opt_an: false,
+            align: None,
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
@@ -1057,6 +1072,7 @@ mod tests {
             r_no_check: false,
             no_x_ext: false,
             opt_an: false,
+            align: None,
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
@@ -1073,5 +1089,28 @@ mod tests {
         let _ = fs::remove_file(dir.join("bar.map"));
         let _ = fs::remove_file(input);
         let _ = fs::remove_dir(dir);
+    }
+
+    #[test]
+    fn rejects_invalid_align_option_value() {
+        let args = Args {
+            output: None,
+            r_format: false,
+            r_no_check: false,
+            no_x_ext: false,
+            opt_an: false,
+            align: Some(3),
+            make_mcs: false,
+            omit_bss: false,
+            cut_symbols: false,
+            map: None,
+            verbose: false,
+            quiet: false,
+            warn_off: false,
+            title: false,
+            inputs: vec!["foo.o".to_string()],
+        };
+        let err = run(args).expect_err("must reject invalid align");
+        assert!(err.to_string().contains("align size must be power of two"));
     }
 }

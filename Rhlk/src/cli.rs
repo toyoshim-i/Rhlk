@@ -18,6 +18,9 @@ pub struct Args {
     #[arg(long = "an")]
     pub opt_an: bool,
 
+    #[arg(short = 'e')]
+    pub align: Option<u32>,
+
     #[arg(long = "makemcs")]
     pub make_mcs: bool,
 
