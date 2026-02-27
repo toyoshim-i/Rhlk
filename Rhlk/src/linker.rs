@@ -127,11 +127,17 @@ fn load_objects_with_requests(
                     anyhow::bail!("archive has no members: {name}");
                 }
                 let base_dir = abs.parent().unwrap_or(Path::new("."));
+                let mut parsed_members = Vec::new();
                 for (member_name, payload) in members {
                     let object = parse_object(&payload).map_err(|e| {
                         anyhow::anyhow!("{}({}): {}", path.to_string_lossy(), member_name, e)
                     })?;
                     let summary = resolve_object(&object);
+                    parsed_members.push((member_name, object, summary));
+                }
+                let select_indices = select_archive_members(&summaries, &parsed_members);
+                for idx in select_indices {
+                    let (member_name, object, summary) = &parsed_members[idx];
                     if verbose {
                         println!(
                             "parsed {}({}): {} commands",
@@ -141,8 +147,8 @@ fn load_objects_with_requests(
                         );
                     }
                     enqueue_requests(&mut pending, base_dir, &summary.requests)?;
-                    objects.push(object);
-                    summaries.push(summary);
+                    objects.push(object.clone());
+                    summaries.push(summary.clone());
                     input_names.push(format!("{}({})", path.to_string_lossy(), member_name));
                 }
             }
@@ -288,6 +294,57 @@ fn parse_ar_members(bytes: &[u8]) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
     Ok(out)
 }
 
+fn select_archive_members(
+    loaded_summaries: &[ObjectSummary],
+    members: &[(String, crate::format::obj::ObjectFile, ObjectSummary)],
+) -> Vec<usize> {
+    let mut selected = Vec::<usize>::new();
+    let mut selected_set = HashSet::<usize>::new();
+    let mut unresolved = unresolved_symbols(loaded_summaries);
+    if unresolved.is_empty() {
+        return selected;
+    }
+
+    loop {
+        let mut changed = false;
+        for (idx, (_, _, sum)) in members.iter().enumerate() {
+            if selected_set.contains(&idx) {
+                continue;
+            }
+            let provides_needed = sum.symbols.iter().any(|s| unresolved.contains(&s.name));
+            if !provides_needed {
+                continue;
+            }
+            selected.push(idx);
+            selected_set.insert(idx);
+            changed = true;
+
+            let mut all = loaded_summaries.to_vec();
+            all.extend(selected.iter().map(|i| members[*i].2.clone()));
+            unresolved = unresolved_symbols(&all);
+        }
+        if !changed {
+            break;
+        }
+    }
+    selected
+}
+
+fn unresolved_symbols(summaries: &[ObjectSummary]) -> HashSet<Vec<u8>> {
+    let mut defs = HashSet::<Vec<u8>>::new();
+    let mut xrefs = HashSet::<Vec<u8>>::new();
+    for s in summaries {
+        for sym in &s.symbols {
+            defs.insert(sym.name.clone());
+        }
+        for xr in &s.xrefs {
+            xrefs.insert(xr.name.clone());
+        }
+    }
+    xrefs.retain(|n| !defs.contains(n));
+    xrefs
+}
+
 fn trim_member_name(name: &str) -> String {
     let mut n = name.trim().to_string();
     if n.ends_with('/') {
@@ -314,7 +371,9 @@ fn resolve_gnu_long_name(table: Option<&[u8]>, offset: usize) -> Option<String> 
 
 #[cfg(test)]
 mod tests {
-    use super::{is_ar_archive, load_objects_with_requests, parse_ar_members};
+    use super::{is_ar_archive, load_objects_with_requests, parse_ar_members, select_archive_members};
+    use crate::format::obj::parse_object;
+    use crate::resolver::resolve_object;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -340,6 +399,36 @@ mod tests {
                 out.push(b'\n');
             }
         }
+        out
+    }
+
+    fn obj_with_xref_and_request(xref: &str, req: &str) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&[0xb2, 0xff, 0x00, 0x00, 0x00, 0x01]);
+        out.extend_from_slice(xref.as_bytes());
+        out.push(0x00);
+        if out.len() % 2 == 1 {
+            out.push(0x00);
+        }
+        out.extend_from_slice(&[0xe0, 0x01]);
+        out.extend_from_slice(req.as_bytes());
+        out.push(0x00);
+        if out.len() % 2 == 1 {
+            out.push(0x00);
+        }
+        out.extend_from_slice(&[0x00, 0x00]);
+        out
+    }
+
+    fn obj_with_def(name: &str) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&[0xb2, 0x01, 0x00, 0x00, 0x00, 0x00]);
+        out.extend_from_slice(name.as_bytes());
+        out.push(0x00);
+        if out.len() % 2 == 1 {
+            out.push(0x00);
+        }
+        out.extend_from_slice(&[0x00, 0x00]);
         out
     }
 
@@ -457,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn loads_archive_members() {
+    fn loads_archive_members_by_unresolved_xref() {
         let uniq = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time")
@@ -467,15 +556,15 @@ mod tests {
 
         let main = dir.join("main.o");
         let lib = dir.join("libx.a");
-        fs::write(&main, [0xe0, 0x01, b'l', b'i', b'b', b'x', b'.', b'a', 0x00, 0x00]).expect("write main");
-        let ar = make_simple_ar(&[("a.o", &[0x00, 0x00]), ("b.o", &[0x00, 0x00])]);
+        fs::write(&main, obj_with_xref_and_request("foo", "libx.a")).expect("write main");
+        let ar = make_simple_ar(&[("foo.o", &obj_with_def("foo")), ("bar.o", &obj_with_def("bar"))]);
         fs::write(&lib, ar).expect("write lib");
 
         let inputs = vec![main.to_string_lossy().to_string()];
         let (_, _, names) = load_objects_with_requests(&inputs, false).expect("must load");
-        assert_eq!(names.len(), 3);
-        assert!(names.iter().any(|v| v.ends_with("libx.a(a.o)")));
-        assert!(names.iter().any(|v| v.ends_with("libx.a(b.o)")));
+        assert_eq!(names.len(), 2);
+        assert!(names.iter().any(|v| v.ends_with("libx.a(foo.o)")));
+        assert!(!names.iter().any(|v| v.ends_with("libx.a(bar.o)")));
 
         let _ = fs::remove_file(main);
         let _ = fs::remove_file(lib);
@@ -501,5 +590,24 @@ mod tests {
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].0, "very_long_name_member.o");
         assert_eq!(members[0].1, vec![0x00, 0x00]);
+    }
+
+    #[test]
+    fn selects_archive_member_that_resolves_unresolved_xref() {
+        let main_bytes = obj_with_xref_and_request("foo", "libx.a");
+        let main = parse_object(&main_bytes).expect("main parse");
+        let main_sum = resolve_object(&main);
+
+        let foo_obj = parse_object(&obj_with_def("foo")).expect("foo parse");
+        let foo_sum = resolve_object(&foo_obj);
+        let bar_obj = parse_object(&obj_with_def("bar")).expect("bar parse");
+        let bar_sum = resolve_object(&bar_obj);
+
+        let members = vec![
+            ("foo.o".to_string(), foo_obj.clone(), foo_sum.clone()),
+            ("bar.o".to_string(), bar_obj.clone(), bar_sum.clone()),
+        ];
+        let picked = select_archive_members(&[main_sum], &members);
+        assert_eq!(picked, vec![0]);
     }
 }
