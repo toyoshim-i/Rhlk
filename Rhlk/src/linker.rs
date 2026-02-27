@@ -52,13 +52,9 @@ fn print_title_if_needed(runtime: RuntimeConfig) {
 }
 
 fn expand_inputs(args: &Args) -> anyhow::Result<Vec<PathBuf>> {
-    let mut expanded_inputs = args
-        .inputs
-        .iter()
-        .map(PathBuf::from)
-        .collect::<Vec<_>>();
+    let mut expanded_inputs = args.inputs.clone();
     for indirect in &args.indirect_files {
-        expanded_inputs.extend(load_indirect_inputs(Path::new(indirect))?);
+        expanded_inputs.extend(load_indirect_inputs(indirect)?);
     }
     expanded_inputs.extend(resolve_lib_inputs(args)?);
     if expanded_inputs.is_empty() {
@@ -216,7 +212,7 @@ fn resolve_lib_inputs(args: &Args) -> anyhow::Result<Vec<PathBuf>> {
     }
     let mut search_paths = Vec::<PathBuf>::new();
     for p in &args.lib_paths {
-        search_paths.push(PathBuf::from(p));
+        search_paths.push(p.clone());
     }
     if args.use_env_lib {
         if let Some(v) = env::var_os("LIB") {
@@ -425,7 +421,7 @@ fn update_section_info_rsize(summaries: &mut [ObjectSummary], layout: &crate::la
 fn resolve_output_path(args: &Args, inputs: &[PathBuf]) -> PathBuf {
     let explicit = args.output.is_some();
     let base = if let Some(out) = args.output.as_ref() {
-        PathBuf::from(out)
+        out.clone()
     } else if let Some(first) = inputs.first() {
         let p = first.clone();
         if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
@@ -1146,7 +1142,7 @@ mod tests {
             load_mode: None,
             defines: Vec::new(),
             indirect_files: Vec::new(),
-            lib_paths: vec![dir.to_string_lossy().to_string()],
+            lib_paths: vec![dir.clone()],
             libs: vec!["foo".to_string()],
             use_env_lib: false,
             g2lk_off: false,
@@ -1468,7 +1464,7 @@ mod tests {
             use_env_lib: false,
             g2lk_off: false,
             g2lk_on: false,
-            inputs: vec!["foo.o".to_string()],
+            inputs: vec![PathBuf::from("foo.o")],
         };
         let inputs = vec![PathBuf::from("foo.o")];
         assert_eq!(resolve_output_path(&args, &inputs), PathBuf::from("foo.x"));
@@ -1479,7 +1475,7 @@ mod tests {
         args.opt_an = true;
         assert_eq!(resolve_output_path(&args, &inputs), PathBuf::from("foo.x"));
 
-        args.output = Some("bar".to_string());
+        args.output = Some(PathBuf::from("bar"));
         assert_eq!(resolve_output_path(&args, &inputs), PathBuf::from("bar"));
 
         args.r_format = true;
@@ -1525,7 +1521,7 @@ mod tests {
             use_env_lib: false,
             g2lk_off: false,
             g2lk_on: false,
-            inputs: vec![input.to_string_lossy().to_string()],
+            inputs: vec![input.clone()],
         };
         run(args).expect("run");
         assert!(dir.join("foo.map").exists());
@@ -1572,7 +1568,7 @@ mod tests {
             use_env_lib: false,
             g2lk_off: false,
             g2lk_on: false,
-            inputs: vec![input.to_string_lossy().to_string()],
+            inputs: vec![input.clone()],
         };
         run(args).expect("run");
         assert!(dir.join("bar.map").exists());
@@ -1609,7 +1605,7 @@ mod tests {
             use_env_lib: false,
             g2lk_off: false,
             g2lk_on: false,
-            inputs: vec!["foo.o".to_string()],
+            inputs: vec![PathBuf::from("foo.o")],
         };
         let err = run(args).expect_err("must reject invalid align");
         assert!(err.to_string().contains("align size must be power of two"));
@@ -1645,7 +1641,7 @@ mod tests {
             use_env_lib: false,
             g2lk_off: false,
             g2lk_on: false,
-            inputs: vec!["in.o".to_string()],
+            inputs: vec![PathBuf::from("in.o")],
         };
         let mut objects = Vec::new();
         let mut summaries = Vec::new();

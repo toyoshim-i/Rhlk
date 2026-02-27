@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::ffi::OsString;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum G2lkMode {
@@ -151,7 +152,7 @@ pub fn finalize_compat_args(args: &mut Args, raw_argv: &[OsString]) -> Result<()
 #[allow(clippy::struct_excessive_bools)]
 pub struct Args {
     #[arg(short = 'o', long = "output")]
-    pub output: Option<String>,
+    pub output: Option<PathBuf>,
 
     #[arg(short = 'r')]
     pub r_format: bool,
@@ -178,10 +179,10 @@ pub struct Args {
     pub defines: Vec<DefineArg>,
 
     #[arg(short = 'i')]
-    pub indirect_files: Vec<String>,
+    pub indirect_files: Vec<PathBuf>,
 
     #[arg(short = 'L')]
-    pub lib_paths: Vec<String>,
+    pub lib_paths: Vec<PathBuf>,
 
     #[arg(short = 'l')]
     pub libs: Vec<String>,
@@ -223,7 +224,7 @@ pub struct Args {
     pub section_info: bool,
 
     #[arg(value_name = "INPUT")]
-    pub inputs: Vec<String>,
+    pub inputs: Vec<PathBuf>,
 }
 
 impl Args {

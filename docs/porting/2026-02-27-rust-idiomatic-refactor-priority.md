@@ -213,6 +213,9 @@
   - `resolve_lib_inputs` の戻り値を `Vec<PathBuf>` に変更し、`expand_inputs` 側で最終段だけ文字列化する構成へ整理。
   - `load_objects_with_requests` 実装本体を `load_objects_with_requests_paths(&[PathBuf], ...)` として分離し、内部処理を `PathBuf` ベースへ移行。
   - `PreparedLink.expanded_inputs` / `expand_inputs` を `Vec<PathBuf>` 化し、`resolve_output_path` / `resolve_map_output` も `PathBuf` 入力へ統一。
+  - `Args` のパス系引数を `PathBuf` 中心へ移行（`output`, `inputs`, `indirect_files`, `lib_paths`）。
+  - `linker` 側の入力展開・ライブラリ探索・出力パス決定で文字列経由の `PathBuf::from` を削減。
+  - 互換性都合で `-p/--map` の「引数省略許容」は維持し、`map` のみ `Option<String>` のまま運用。
 - P1-1: 着手（第一段）
   - archive member 選択結果の適用を `HashSet<usize>` から `Vec<bool>` マスクへ変更し、中間集合構築と `contains` 探索コストを削減。
 
