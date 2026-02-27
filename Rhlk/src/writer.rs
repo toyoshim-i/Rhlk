@@ -3436,6 +3436,119 @@ mod tests {
     }
 
     #[test]
+    fn materializes_4605_with_rdata_section_base() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::Header {
+                    section: 0x05,
+                    size: 4,
+                    name: b"rdata".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x4605,
+                    payload: vec![0x00, 0x00, 0x00, 0x03],
+                },
+                Command::ChangeSection { section: 0x05 },
+                Command::RawData(vec![0x11, 0x22, 0x33, 0x44]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        // lo=05 => RDATA placement(0) + adr(3)
+        assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x03]);
+    }
+
+    #[test]
+    fn materializes_5608_with_rldata_section_base_and_offset() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::Header {
+                    section: 0x08,
+                    size: 8,
+                    name: b"rldata".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x5608,
+                    payload: vec![0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x02],
+                },
+                Command::ChangeSection { section: 0x08 },
+                Command::RawData(vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        // lo=08 => RLDATA placement(0) + adr(4) + off(2) = 6
+        assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x06]);
+    }
+
+    #[test]
+    fn materializes_6b08_byte_displacement_rldata() {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 1,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x6b08,
+                    payload: vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 1,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0x5a]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut s0 = mk_summary(2, 1, 0);
+        s0.xrefs.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        let mut s1 = mk_summary(2, 1, 0);
+        s1.symbols.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let layout = plan_layout(&[s0.clone(), s1.clone()]);
+        let image = build_x_image(&[obj0, obj1], &[s0, s1], &layout).expect("x image");
+        // lo=08 branch is exercised; with no RLData placement, base=0 and sym(text)=2.
+        assert_eq!(&image[64..65], &[0x02]);
+    }
+
+    #[test]
     fn materializes_9200_from_calc_stack_value() {
         let obj = ObjectFile {
             commands: vec![
