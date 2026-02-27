@@ -106,6 +106,18 @@ ASM
   (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_text_label.o a0_text_label.s >/dev/null 2>/dev/null)
   cp "${tmp}/a0_text_label.o" "${OUT_DIR}/a0_text_label.o"
 
+  cat > "${tmp}/a0_text_labels.s" <<'ASM'
+.xdef label1
+.xdef label2
+label1:
+.dc.w 0
+label2:
+.dc.w 0
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_text_labels.o a0_text_labels.s >/dev/null 2>/dev/null)
+  cp "${tmp}/a0_text_labels.o" "${OUT_DIR}/a0_text_labels.o"
+
   cat > "${tmp}/a0_attr_main.s" <<'ASM'
 .xref label
 .dc.l .neg.label
@@ -129,6 +141,24 @@ ASM
 ASM
   (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_attr_sub_main.o a0_attr_sub_main.s >/dev/null 2>/dev/null)
   cp "${tmp}/a0_attr_sub_main.o" "${OUT_DIR}/a0_attr_sub_main.o"
+
+  cat > "${tmp}/a0_asub.s" <<'ASM'
+.xref label1
+.xref label2
+.dc.l label2-label1
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_asub.o a0_asub.s >/dev/null 2>/dev/null)
+  cp "${tmp}/a0_asub.o" "${OUT_DIR}/a0_asub.o"
+
+  cat > "${tmp}/a0_aadd.s" <<'ASM'
+.xref label1
+.xref label2
+.dc.l label1+label2
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_aadd.o a0_aadd.s >/dev/null 2>/dev/null)
+  cp "${tmp}/a0_aadd.o" "${OUT_DIR}/a0_aadd.o"
 
   cat > "${tmp}/stk91_main.s" <<'ASM'
 .xref label
