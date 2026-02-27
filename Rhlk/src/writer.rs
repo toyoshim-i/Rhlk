@@ -3385,12 +3385,63 @@ mod tests {
     }
 
     #[test]
+    fn wrt_stk_9100_reports_underflow() {
+        let mut st = Vec::<ExprEntry>::new();
+        let msgs = classify_expression_errors(
+            0x9100,
+            &Command::Opaque {
+                code: 0x9100,
+                payload: Vec::new(),
+            },
+            &mk_summary(2, 0, 0),
+            &HashMap::new(),
+            SectionKind::Text,
+            &mut st,
+        );
+        assert_eq!(msgs, vec!["計算用スタックに値がありません"]);
+    }
+
+    #[test]
+    fn wrt_stk_9300_reports_underflow() {
+        let mut st = Vec::<ExprEntry>::new();
+        let msgs = classify_expression_errors(
+            0x9300,
+            &Command::Opaque {
+                code: 0x9300,
+                payload: Vec::new(),
+            },
+            &mk_summary(2, 0, 0),
+            &HashMap::new(),
+            SectionKind::Text,
+            &mut st,
+        );
+        assert_eq!(msgs, vec!["計算用スタックに値がありません"]);
+    }
+
+    #[test]
     fn wrt_stk_9600_reports_underflow() {
         let mut st = Vec::<ExprEntry>::new();
         let msgs = classify_expression_errors(
             0x9600,
             &Command::Opaque {
                 code: 0x9600,
+                payload: Vec::new(),
+            },
+            &mk_summary(2, 0, 0),
+            &HashMap::new(),
+            SectionKind::Text,
+            &mut st,
+        );
+        assert_eq!(msgs, vec!["計算用スタックに値がありません"]);
+    }
+
+    #[test]
+    fn wrt_stk_9900_reports_underflow() {
+        let mut st = Vec::<ExprEntry>::new();
+        let msgs = classify_expression_errors(
+            0x9900,
+            &Command::Opaque {
+                code: 0x9900,
                 payload: Vec::new(),
             },
             &mk_summary(2, 0, 0),
@@ -4307,6 +4358,90 @@ mod tests {
         let layout = plan_layout(std::slice::from_ref(&sum));
         let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
         assert_eq!(&image[64..66], &[0x00, 0x7f]);
+    }
+
+    #[test]
+    fn materializes_9100_from_calc_stack_value() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x8000,
+                    payload: vec![0x00, 0x00, 0x12, 0x34],
+                },
+                Command::Opaque {
+                    code: 0x9100,
+                    payload: Vec::new(),
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 2, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..66], &[0x12, 0x34]);
+    }
+
+    #[test]
+    fn materializes_9300_from_calc_stack_value() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 1,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x8000,
+                    payload: vec![0x00, 0x00, 0x00, 0x7f],
+                },
+                Command::Opaque {
+                    code: 0x9300,
+                    payload: Vec::new(),
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 1, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..65], &[0x7f]);
+    }
+
+    #[test]
+    fn materializes_9900_from_calc_stack_value() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x8000,
+                    payload: vec![0x00, 0x00, 0x12, 0x34],
+                },
+                Command::Opaque {
+                    code: 0x9900,
+                    payload: Vec::new(),
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 2, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..66], &[0x12, 0x34]);
     }
 
     fn mk_summary(align: u32, text: u32, data: u32) -> ObjectSummary {
