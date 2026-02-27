@@ -43,3 +43,18 @@
 ## まとめ
 - 再配置なし/あり双方の比較ケースで最終 `.x` 一致を確認。
 - 既存回帰ハーネス (`9/9`) も継続して一致。
+
+## 2026-02-27 再検証（Roadmap 6）
+- 実施コマンド
+  - `cargo test -q`
+  - `./tools/run_hlkx_regression.sh`
+- 結果
+  - Rust unit/integration: `124 passed`
+  - run68 回帰: 全ケース `PASS`（`All regression cases matched.`）
+- 監査対象
+  - 生成物: `.x/.r/.mcs/.map`
+  - メッセージ: `stdout+stderr` 結合後比較（文字コード/パス正規化あり）
+  - 終了コード: ケース単位で一致確認
+- 最終既知差分
+  - map ヘッダ2行目の実行ファイルパスのみ（比較時は `<PATH>` 正規化）
+  - 上記以外の既知差分はなし
