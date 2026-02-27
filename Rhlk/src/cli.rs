@@ -36,6 +36,9 @@ pub struct Args {
     #[arg(long = "quiet", short = 'z')]
     pub quiet: bool,
 
+    #[arg(short = 'w')]
+    pub warn_off: bool,
+
     #[arg(value_name = "INPUT")]
     pub inputs: Vec<String>,
 }
