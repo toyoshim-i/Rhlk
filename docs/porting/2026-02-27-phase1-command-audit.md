@@ -20,6 +20,8 @@
 - `6b` の `lo=02/03/04` ケースを unit test 追加
 - 既存 `6b05/06/07/08/09/0a` と合わせて `6b01..0a` がテスト網羅
 - `cargo test` で全通（118 passed）
+- `40/41/42/43/45/46/47`, `50/51/52/53/55/56/57`, `65/69/6a/6b`, `90/91/92/93/96/99/9a`, `a0xx` の監査を反映
+- `cargo test` で全通（120 passed）
 
 ## Added Tests
 - `materializes_6502_word_displacement_data`
@@ -34,8 +36,8 @@
 - `materializes_6b02_byte_displacement_data`
 - `materializes_6b03_byte_displacement_bss`
 - `materializes_6b04_byte_displacement_stack`
+- `rebases_scd_info_bss_value_with_obj_size_rule`
+- `rejects_scd_sinfo_stack_section`
 
 ## Remaining Focus (Next Slice)
-1. `40/41/42/43/45/46/47` と `50/51/52/53/55/56/57` の `lo=00/01..0a/fc..ff` 分岐を表で可視化
-2. それぞれの「値範囲チェック」「section 制約」「relocation 判定」の差分確認
-3. 未網羅分岐を unit + compat に追加（テスト先行）
+1. フェーズ 3（入力解決厳密化）へ移行

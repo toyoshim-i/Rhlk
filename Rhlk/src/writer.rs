@@ -540,10 +540,9 @@ fn build_scd_passthrough(
         }
 
         let mut p = 12usize;
-        // NOTE: HLK make_scdinfo performs richer fixups.
-        // Here we apply a reduced fixup:
+        // HLK make_scdinfo compatible line fixup:
         // - location!=0 : + text_pos
-        // - location==0 : + sinfo_pos(entries)
+        // - location==0 : + cumulative sinfo_pos(entries)
         let text_pos = layout.placements[idx]
             .by_section
             .get(&SectionKind::Text)
@@ -616,20 +615,13 @@ fn rebase_scd_info_table(
     let mut p = 0usize;
     while p + 18 <= sinfo_bytes {
         let sect = u16::from_be_bytes([out[p + 12], out[p + 13]]);
-        let add = match sect as u8 {
-            0x01 => placement.get(&SectionKind::Text).copied().unwrap_or(0),
-            0x02 => placement.get(&SectionKind::Data).copied().unwrap_or(0),
-            0x03 => placement.get(&SectionKind::Bss).copied().unwrap_or(0),
-            0x05 => placement.get(&SectionKind::RData).copied().unwrap_or(0),
-            0x06 => placement.get(&SectionKind::RBss).copied().unwrap_or(0),
-            0x08 => placement.get(&SectionKind::RLData).copied().unwrap_or(0),
-            0x09 => placement.get(&SectionKind::RLBss).copied().unwrap_or(0),
-            _ => 0,
-        };
-        if add != 0 {
-            let mut val = u32::from_be_bytes([out[p + 8], out[p + 9], out[p + 10], out[p + 11]]);
-            val = val.saturating_add(add);
-            out[p + 8..p + 12].copy_from_slice(&val.to_be_bytes());
+        let delta = sinfo_section_delta(sect, placement, layout)?;
+        if let Some(delta) = delta {
+            if delta != 0 {
+                let mut val = u32::from_be_bytes([out[p + 8], out[p + 9], out[p + 10], out[p + 11]]);
+                val = val.wrapping_add(delta as i32 as u32);
+                out[p + 8..p + 12].copy_from_slice(&val.to_be_bytes());
+            }
         }
         p += 18;
     }
@@ -686,6 +678,23 @@ fn rebase_scd_info_table(
         q += 18;
     }
     Ok(out)
+}
+
+fn sinfo_section_delta(
+    sect: u16,
+    placement: &BTreeMap<SectionKind, u32>,
+    layout: &LayoutPlan,
+) -> Result<Option<i64>> {
+    match sect {
+        0x0000 => Ok(None),
+        0x0001 | 0x0002 | 0x0003 | 0x0005 | 0x0006 | 0x0008 | 0x0009 => {
+            Ok(einfo_section_delta(sect, placement, layout))
+        }
+        0x0004 | 0x0007 | 0x000a => bail!("unsupported SCD sinfo section: {sect:#06x}"),
+        // xref/common/rcommon/rlcommon are carried as-is in make_scdinfo path.
+        0x00fc..=0x00fe | 0xfffc..=0xffff => Ok(None),
+        _ => bail!("unsupported SCD sinfo section: {sect:#06x}"),
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3598,6 +3607,76 @@ mod tests {
         let scd_info_pos = 64 + text_size + data_size + reloc_size + sym_size + line_size;
         // val.l should be 1 + text_pos(4) = 5
         assert_eq!(&image[scd_info_pos + 8..scd_info_pos + 12], &[0, 0, 0, 5]);
+    }
+
+    #[test]
+    fn rebases_scd_info_bss_value_with_obj_size_rule() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::Header {
+                    section: 0x02,
+                    size: 2,
+                    name: b"data".to_vec(),
+                },
+                Command::Header {
+                    section: 0x03,
+                    size: 4,
+                    name: b"bss".to_vec(),
+                },
+                Command::End,
+            ],
+            // linfo=0, sinfo+einfo=18, ninfo=0, sinfo_count=1
+            // entry: val=10, sect=3(bss)
+            scd_tail: vec![
+                0, 0, 0, 0, 0, 0, 0, 18, 0, 0, 0, 0, //
+                b'_', b'b', 0, 0, 0, 0, 0, 0, //
+                0, 0, 0, 10, //
+                0, 3, //
+                0, 0, //
+                0, 0,
+            ],
+        };
+        let mut sum = mk_summary(2, 2, 2);
+        sum.declared_section_sizes.insert(SectionKind::Bss, 4);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(std::slice::from_ref(&obj), std::slice::from_ref(&sum), &layout)
+            .expect("x image");
+
+        let text_size = u32::from_be_bytes([image[12], image[13], image[14], image[15]]) as usize;
+        let data_size = u32::from_be_bytes([image[16], image[17], image[18], image[19]]) as usize;
+        let reloc_size = u32::from_be_bytes([image[24], image[25], image[26], image[27]]) as usize;
+        let sym_size = u32::from_be_bytes([image[28], image[29], image[30], image[31]]) as usize;
+        let line_size = u32::from_be_bytes([image[32], image[33], image[34], image[35]]) as usize;
+        let scd_info_pos = 64 + text_size + data_size + reloc_size + sym_size + line_size;
+        // bss delta: bss_pos - obj_size = (text+data+0) - (text+data+bss) = -4
+        // 10 + (-4) = 6
+        assert_eq!(&image[scd_info_pos + 8..scd_info_pos + 12], &[0, 0, 0, 6]);
+    }
+
+    #[test]
+    fn rejects_scd_sinfo_stack_section() {
+        let obj = ObjectFile {
+            commands: vec![Command::End],
+            // sinfo_count=1, sect=4(stack)
+            scd_tail: vec![
+                0, 0, 0, 0, 0, 0, 0, 18, 0, 0, 0, 0, //
+                b'_', b's', 0, 0, 0, 0, 0, 0, //
+                0, 0, 0, 1, //
+                0, 4, //
+                0, 0, //
+                0, 0,
+            ],
+        };
+        let sum = mk_summary(2, 0, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let err = build_x_image(std::slice::from_ref(&obj), std::slice::from_ref(&sum), &layout)
+            .expect_err("must reject");
+        assert!(err.to_string().contains("unsupported SCD sinfo section"));
     }
 
     #[test]

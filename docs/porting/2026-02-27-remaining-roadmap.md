@@ -6,15 +6,15 @@ HLKX との互換を「実運用での一致」から「ロジック網羅での
 ## Priority Roadmap
 
 ## 1) 命令実行系の最終監査（最優先）
-- [ ] `make_exe.s` の `Opaque / expression / stack write` を分岐単位で棚卸し
-- [ ] 未カバー分岐に対応する unit/compat テストを先行追加
-- [ ] 実装を埋め、回帰ハーネスで固定化
+- [x] `make_exe.s` の `Opaque / expression / stack write` を分岐単位で棚卸し
+- [x] 未カバー分岐に対応する unit/compat テストを先行追加
+- [x] 実装を埋め、回帰ハーネスで固定化
 - 完了条件: 分岐対応表（asm ↔ Rust test）が埋まり、既知未対応が明示ゼロ
 
 ## 2) SCD 補正ロジックの厳密化
-- [ ] `reduced fixup` の差分を `make_scdinfo` と比較して列挙
-- [ ] 未実装分岐の補正ロジックを追加
-- [ ] SCD 専用ケースで raw 出力比較を追加
+- [x] `reduced fixup` の差分を `make_scdinfo` と比較して列挙
+- [x] 未実装分岐の補正ロジックを追加
+- [x] SCD 専用ケースで raw 出力比較を追加
 - 完了条件: SCD 関連で「最小実装」注記を解消
 
 ## 3) 入力解決（obj/arc/lib）互換の厳密化
