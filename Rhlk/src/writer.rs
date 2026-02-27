@@ -280,21 +280,9 @@ fn build_x_image_with_options(
         .get(&SectionKind::Data)
         .map_or(0, |v| usize_to_u32_saturating(v.len()));
     let (data_size, g2lk_synth) = extend_data_for_g2lk(&mut linked, objects, g2lk_mode, text_size, data_size);
-    let bss_only = layout
-        .total_size_by_section
-        .get(&SectionKind::Bss)
-        .copied()
-        .unwrap_or(0);
-    let common_only = layout
-        .total_size_by_section
-        .get(&SectionKind::Common)
-        .copied()
-        .unwrap_or(0);
-    let stack_only = layout
-        .total_size_by_section
-        .get(&SectionKind::Stack)
-        .copied()
-        .unwrap_or(0);
+    let bss_only = section_total(layout, SectionKind::Bss);
+    let common_only = section_total(layout, SectionKind::Common);
+    let stack_only = section_total(layout, SectionKind::Stack);
     let bss_size = bss_only
         .saturating_add(common_only)
         .saturating_add(stack_only);
@@ -671,41 +659,11 @@ fn einfo_section_delta(
     placement: &BTreeMap<SectionKind, u32>,
     layout: &LayoutPlan,
 ) -> Option<i64> {
-    let text_total = i64::from(
-        layout
-            .total_size_by_section
-            .get(&SectionKind::Text)
-            .copied()
-            .unwrap_or(0),
-    );
-    let data_total = i64::from(
-        layout
-            .total_size_by_section
-            .get(&SectionKind::Data)
-            .copied()
-            .unwrap_or(0),
-    );
-    let bss_total = i64::from(
-        layout
-            .total_size_by_section
-            .get(&SectionKind::Bss)
-            .copied()
-            .unwrap_or(0),
-    );
-    let common_total = i64::from(
-        layout
-            .total_size_by_section
-            .get(&SectionKind::Common)
-            .copied()
-            .unwrap_or(0),
-    );
-    let stack_total = i64::from(
-        layout
-            .total_size_by_section
-            .get(&SectionKind::Stack)
-            .copied()
-            .unwrap_or(0),
-    );
+    let text_total = i64::from(section_total(layout, SectionKind::Text));
+    let data_total = i64::from(section_total(layout, SectionKind::Data));
+    let bss_total = i64::from(section_total(layout, SectionKind::Bss));
+    let common_total = i64::from(section_total(layout, SectionKind::Common));
+    let stack_total = i64::from(section_total(layout, SectionKind::Stack));
     let obj_size = text_total + data_total + bss_total + common_total + stack_total;
 
     let text_pos = i64::from(placement.get(&SectionKind::Text).copied().unwrap_or(0));
@@ -859,16 +817,8 @@ fn build_r_payload(
         .get(&SectionKind::Data)
         .map_or(0, |v| usize_to_u32_saturating(v.len()));
     let (data_size, g2lk_synth) = extend_data_for_g2lk(&mut linked, objects, g2lk_mode, text_size, data_size);
-    let bss_only = layout
-        .total_size_by_section
-        .get(&SectionKind::Bss)
-        .copied()
-        .unwrap_or(0);
-    let common_only = layout
-        .total_size_by_section
-        .get(&SectionKind::Common)
-        .copied()
-        .unwrap_or(0);
+    let bss_only = section_total(layout, SectionKind::Bss);
+    let common_only = section_total(layout, SectionKind::Common);
     let global_symbol_addrs = build_global_symbol_addrs_with_g2lk(
         summaries,
         layout,
@@ -919,11 +869,7 @@ fn link_initialized_sections(
 
     let mut linked = BTreeMap::<SectionKind, Vec<u8>>::new();
     for &section in section_order {
-        let total = layout
-            .total_size_by_section
-            .get(&section)
-            .copied()
-            .unwrap_or(0) as usize;
+        let total = usize::try_from(section_total(layout, section)).unwrap_or(usize::MAX);
         linked.insert(section, vec![0; total]);
     }
 
@@ -1061,26 +1007,10 @@ fn validate_r_convertibility(
     output_path: &str,
     g2lk_mode: bool,
 ) -> Result<()> {
-    let text_size = layout
-        .total_size_by_section
-        .get(&SectionKind::Text)
-        .copied()
-        .unwrap_or(0);
-    let data_size = layout
-        .total_size_by_section
-        .get(&SectionKind::Data)
-        .copied()
-        .unwrap_or(0);
-    let bss_only = layout
-        .total_size_by_section
-        .get(&SectionKind::Bss)
-        .copied()
-        .unwrap_or(0);
-    let common_only = layout
-        .total_size_by_section
-        .get(&SectionKind::Common)
-        .copied()
-        .unwrap_or(0);
+    let text_size = section_total(layout, SectionKind::Text);
+    let data_size = section_total(layout, SectionKind::Data);
+    let bss_only = section_total(layout, SectionKind::Bss);
+    let common_only = section_total(layout, SectionKind::Common);
     let g2lk_synth = compute_g2lk_synthetic_symbols(objects, g2lk_mode, text_size, data_size);
     let global_symbol_addrs = build_global_symbol_addrs_with_g2lk(
         summaries,
