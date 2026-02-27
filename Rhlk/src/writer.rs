@@ -4943,6 +4943,21 @@ mod tests {
     }
 
     #[test]
+    fn materializes_6b02_byte_displacement_data() {
+        assert_6b_r_section_displacement(0x02);
+    }
+
+    #[test]
+    fn materializes_6b03_byte_displacement_bss() {
+        assert_6b_r_section_displacement(0x03);
+    }
+
+    #[test]
+    fn materializes_6b04_byte_displacement_stack() {
+        assert_6b_r_section_displacement(0x04);
+    }
+
+    #[test]
     fn materializes_6b06_byte_displacement_rbss() {
         assert_6b_r_section_displacement(0x06);
     }
@@ -5100,6 +5115,98 @@ mod tests {
         let layout = plan_layout(std::slice::from_ref(&sum));
         let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
         assert_eq!(&image[64..66], &[0x12, 0x34]);
+    }
+
+    fn assert_label_displacement_for_lo(code_hi: u8, lo: u8, expected: &[u8]) {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: expected.len() as u32,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: ((code_hi as u16) << 8) | lo as u16,
+                    payload: vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0x5a, 0x5b]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut s0 = mk_summary(2, expected.len() as u32, 0);
+        s0.xrefs.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        let mut s1 = mk_summary(2, 2, 0);
+        s1.symbols.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let layout = plan_layout(&[s0.clone(), s1.clone()]);
+        let image = build_x_image(&[obj0, obj1], &[s0, s1], &layout).expect("x image");
+        assert_eq!(&image[64..64 + expected.len()], expected);
+    }
+
+    #[test]
+    fn materializes_6502_word_displacement_data() {
+        assert_label_displacement_for_lo(0x65, 0x02, &[0x00, 0x02]);
+    }
+
+    #[test]
+    fn materializes_6503_word_displacement_bss() {
+        assert_label_displacement_for_lo(0x65, 0x03, &[0x00, 0x02]);
+    }
+
+    #[test]
+    fn materializes_6504_word_displacement_stack() {
+        assert_label_displacement_for_lo(0x65, 0x04, &[0x00, 0x02]);
+    }
+
+    #[test]
+    fn materializes_6902_word_displacement_alias_data() {
+        assert_label_displacement_for_lo(0x69, 0x02, &[0x00, 0x02]);
+    }
+
+    #[test]
+    fn materializes_6903_word_displacement_alias_bss() {
+        assert_label_displacement_for_lo(0x69, 0x03, &[0x00, 0x02]);
+    }
+
+    #[test]
+    fn materializes_6904_word_displacement_alias_stack() {
+        assert_label_displacement_for_lo(0x69, 0x04, &[0x00, 0x02]);
+    }
+
+    #[test]
+    fn materializes_6a02_long_displacement_data() {
+        assert_label_displacement_for_lo(0x6a, 0x02, &[0x00, 0x00, 0x00, 0x04]);
+    }
+
+    #[test]
+    fn materializes_6a03_long_displacement_bss() {
+        assert_label_displacement_for_lo(0x6a, 0x03, &[0x00, 0x00, 0x00, 0x04]);
+    }
+
+    #[test]
+    fn materializes_6a04_long_displacement_stack() {
+        assert_label_displacement_for_lo(0x6a, 0x04, &[0x00, 0x00, 0x00, 0x04]);
     }
 
     fn mk_summary(align: u32, text: u32, data: u32) -> ObjectSummary {
