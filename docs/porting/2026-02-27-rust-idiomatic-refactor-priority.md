@@ -194,6 +194,7 @@
   - `resolver.rs` に `#[must_use]` 付与と `usize -> u32` 変換 helper を適用。
   - `linker.rs` のフォーマット/closure 警告を解消し、内部 helper に `too_many_arguments` 許可を明示。
   - `cli.rs` / `format/obj.rs` / `layout.rs` / `linker.rs` の pedantic 警告を追加で解消し、`clippy` を全体クリーン化。
+  - `writer.rs` 内の巨大 `mod tests` を `writer/tests.rs` へ分離し、本体ロジックとテスト責務を分離。
 - P3-3: 完了
   - `format/obj.rs` の opaque opcode 判定分岐を整理し、重複 arm を統合。
   - `is_label_section` を range pattern 化、`align_even` を `is_multiple_of` ベースへ更新。
