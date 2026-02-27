@@ -109,6 +109,13 @@ fn build_map_text(
     common_only: u32,
 ) -> String {
     let addrs = build_global_symbol_addrs(summaries, layout, text_size, data_size, bss_only, common_only);
+    let bss_size = bss_only
+        .saturating_add(common_only)
+        .saturating_add(section_total(layout, SectionKind::Stack));
+    let exec = resolve_exec_address(summaries, text_size, data_size, bss_size)
+        .ok()
+        .flatten()
+        .unwrap_or(0);
     let mut rows = Vec::<(u32, String, String)>::new();
     for (name_bytes, sym) in addrs {
         let name = String::from_utf8_lossy(&name_bytes).to_string();
@@ -117,6 +124,7 @@ fn build_map_text(
     rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
     let mut out = String::new();
     out.push_str("# rhlk map\n");
+    out.push_str(&format!("EXEC    {exec:08X}\n"));
     out.push_str("# sections\n");
     let text_sz = section_total(layout, SectionKind::Text);
     let data_sz = section_total(layout, SectionKind::Data);
@@ -2296,6 +2304,7 @@ mod tests {
         let layout = plan_layout(&[s0.clone(), s1.clone()]);
         let text = build_map_text(&[s0, s1], &layout, 4, 2, 0, 0);
         assert!(text.contains("# rhlk map"));
+        assert!(text.contains("EXEC    00000000"));
         assert!(text.contains("TEXT    start=00000000 size=00000004"));
         assert!(text.contains("DATA    start=00000004 size=00000002"));
         assert!(text.contains("00000000 TEXT    _text0"));
