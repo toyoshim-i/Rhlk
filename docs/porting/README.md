@@ -1,8 +1,6 @@
 # Porting Docs Index
 
 ## 現在の正（まず読む）
-- `2026-02-27-remaining-roadmap.md`
-  - 移植ロードマップと完了状態。
 - `2026-02-27-final-executable-compare.md`
   - 最終の E2E 比較結果（生成物・メッセージ・終了コード）。
 - `2026-02-27-regression-harness.md`
@@ -13,6 +11,8 @@
   - テスト種別、環境構築、実行手順の総合ガイド。
 - `2026-02-27-rust-idiomatic-refactor-priority.md`
   - Rustらしさ監査とリファクタリング優先度。
+- `2026-02-27-remaining-roadmap.md`
+  - ロードマップの完了記録（全項目完了済み）。
 
 ## 仕様・実装監査（参照用）
 - `2026-02-27-command-coverage.md`
