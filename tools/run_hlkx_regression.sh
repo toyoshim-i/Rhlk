@@ -177,7 +177,10 @@ compare_case() {
 
   local orig_map="${orig_prefix}.map"
   local rhlk_map="${rhlk_prefix}.map"
-  if [[ -f "${orig_map}" || -f "${rhlk_map}" ]]; then
+  local orig_rc rhlk_rc
+  orig_rc="$(cat "${orig_prefix}.rc")"
+  rhlk_rc="$(cat "${rhlk_prefix}.rc")"
+  if [[ "${orig_rc}" == "0" && "${rhlk_rc}" == "0" && ( -f "${orig_map}" || -f "${rhlk_map}" ) ]]; then
     if [[ ! -f "${orig_map}" || ! -f "${rhlk_map}" ]]; then
       echo "[${name}] map output existence differs" >>"${diff_file}"
       failed=1

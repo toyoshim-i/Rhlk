@@ -14,6 +14,7 @@
 - オリジナル HLK 側メッセージは `Shift_JIS` を `UTF-8` に正規化して比較する。
 - パスを含む一部エラーメッセージは、比較時にパス部分を `<PATH>` に正規化する。
 - `.map` はフォーマット移植中のため、比較時に `name/addr/section` を抽出して正規化比較する。
+- `.map` 比較は両実装の終了コードが `0` のケースに限定する。
 
 ## 追加ファイル
 - `tools/run_hlkx_regression.sh`
@@ -94,7 +95,7 @@ RHLK_CMD="cargo run --manifest-path /abs/path/Rhlk/Cargo.toml --quiet --" \
 4. `output_ext`（`x` または `r`）
 
 ## 現在の一致状況 (2026-02-27)
-- 10/10 以上のケース一致（`map_xdef` を含む）
+- map 比較ケースを含めて全ケース一致（`map_xdef`, `map_d32_adrs` を含む）
 - メッセージ比較は `stdout+stderr` 結合後に文字コード・パス正規化を適用して実施
 
 ## run68 の取り込み
