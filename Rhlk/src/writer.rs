@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use thiserror::Error;
@@ -56,7 +57,7 @@ pub fn write_output(
             {
                 anyhow::anyhow!(
                     "再配置対象が奇数アドレスにあります: {}",
-                    to_human68k_path(output_path)
+                    to_human68k_path(Path::new(output_path))
                 )
             } else {
                 err
@@ -98,7 +99,7 @@ pub fn write_output(
         patch_mcs_size(&mut payload, bss_extra).map_err(|_| {
             anyhow::anyhow!(
                 "MACS形式ファイルではありません: {}",
-                to_human68k_path(output_path)
+                to_human68k_path(Path::new(output_path))
             )
         })?;
     }
@@ -982,7 +983,7 @@ fn validate_r_convertibility(
     if !reloc.is_empty() {
         bail!(
             "再配置テーブルが使われています: {}",
-            to_human68k_path(output_path)
+            to_human68k_path(Path::new(output_path))
         );
     }
 
@@ -1014,14 +1015,14 @@ fn validate_r_convertibility(
     if exec != 0 {
         bail!(
             "実行開始アドレスがファイル先頭ではありません: {}",
-            to_human68k_path(output_path)
+            to_human68k_path(Path::new(output_path))
         );
     }
     Ok(())
 }
 
-fn to_human68k_path(path: &str) -> String {
-    format!("A:{}", path.replace('/', "\\"))
+fn to_human68k_path(path: &Path) -> String {
+    format!("A:{}", path.to_string_lossy().replace('/', "\\"))
 }
 
 fn collect_object_relocations(

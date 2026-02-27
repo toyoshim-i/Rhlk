@@ -120,6 +120,7 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
     }
 
     let output = resolve_output_path(args, &expanded_inputs);
+    let output_s = output.to_string_lossy().to_string();
     let options = OutputOptions {
         r_format: args.r_format || args.make_mcs,
         r_no_check: args.r_no_check,
@@ -132,7 +133,7 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
         g2lk_mode,
     };
     write_output(
-        &output,
+        &output_s,
         options,
         &objects,
         &input_names,
@@ -140,12 +141,13 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
         &layout,
     )?;
     if args.verbose {
-        println!("wrote output: {output}");
+        println!("wrote output: {}", output.display());
     }
-    if let Some(map_output) = resolve_map_output(&args.map, &Some(output.clone()), &expanded_inputs) {
-        write_map(&output, &map_output, &summaries, &layout, &input_names)?;
+    if let Some(map_output) = resolve_map_output(args.map.as_ref(), Some(output.as_path()), &expanded_inputs) {
+        let map_output_s = map_output.to_string_lossy().to_string();
+        write_map(&output_s, &map_output_s, &summaries, &layout, &input_names)?;
         if args.verbose {
-            println!("wrote map: {map_output}");
+            println!("wrote map: {}", map_output.display());
         }
     }
 
@@ -398,37 +400,39 @@ fn update_section_info_rsize(summaries: &mut [ObjectSummary], layout: &crate::la
     }
 }
 
-fn resolve_output_path(args: &Args, inputs: &[String]) -> String {
+fn resolve_output_path(args: &Args, inputs: &[String]) -> PathBuf {
     let explicit = args.output.is_some();
-    let base = if let Some(out) = args.output.clone() {
-        out
+    let base = if let Some(out) = args.output.as_ref() {
+        PathBuf::from(out)
     } else if let Some(first) = inputs.first() {
         let p = PathBuf::from(first);
         if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
             if let Some(parent) = p.parent() {
-                if !parent.as_os_str().is_empty() {
-                    parent.join(stem).to_string_lossy().to_string()
+                if parent.as_os_str().is_empty() {
+                    PathBuf::from(stem)
                 } else {
-                    stem.to_string()
+                    parent.join(stem)
                 }
             } else {
-                stem.to_string()
+                PathBuf::from(stem)
             }
         } else {
-            first.clone()
+            PathBuf::from(first)
         }
     } else {
-        "a".to_string()
+        PathBuf::from("a")
     };
-    let p = PathBuf::from(&base);
-    if p.extension().is_some() {
+    if base.extension().is_some() {
         return base;
     }
+    let mut out = base;
     if args.make_mcs {
-        return format!("{base}.mcs");
+        out.set_extension("mcs");
+        return out;
     }
     if args.r_format {
-        return format!("{base}.r");
+        out.set_extension("r");
+        return out;
     }
     let add_x = if args.opt_an {
         !explicit
@@ -436,32 +440,27 @@ fn resolve_output_path(args: &Args, inputs: &[String]) -> String {
         !args.no_x_ext
     };
     if add_x {
-        format!("{base}.x")
-    } else {
-        base
+        out.set_extension("x");
     }
+    out
 }
 
 fn resolve_map_output(
-    map_opt: &Option<String>,
-    output_opt: &Option<String>,
+    map_opt: Option<&String>,
+    output_opt: Option<&Path>,
     inputs: &[String],
-) -> Option<String> {
-    let raw = map_opt.as_ref()?;
+) -> Option<PathBuf> {
+    let raw = map_opt?;
     if !raw.is_empty() {
         let p = PathBuf::from(raw);
         if p.extension().is_some() {
-            return Some(raw.clone());
+            return Some(p);
         }
-        let mut with = raw.clone();
-        with.push_str(".map");
-        return Some(with);
+        return Some(p.with_extension("map"));
     }
-    let base = output_opt
-        .as_ref()
-        .cloned()
-        .or_else(|| inputs.first().cloned())?;
-    let p = PathBuf::from(base);
+    let p = output_opt
+        .map(Path::to_path_buf)
+        .or_else(|| inputs.first().map(PathBuf::from))?;
     let stem = p.file_stem()?.to_string_lossy();
     let mut out = if let Some(parent) = p.parent() {
         parent.join(format!("{stem}.map"))
@@ -471,7 +470,7 @@ fn resolve_map_output(
     if out.as_os_str().is_empty() {
         out = PathBuf::from("a.map");
     }
-    Some(out.to_string_lossy().to_string())
+    Some(out)
 }
 
 fn validate_unresolved_symbols(summaries: &[ObjectSummary], input_names: &[String]) -> anyhow::Result<()> {
@@ -835,6 +834,7 @@ mod tests {
     use crate::format::obj::{Command, ObjectFile, parse_object};
     use crate::resolver::{SectionKind, resolve_object};
     use std::fs;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_simple_ar(entries: &[(&str, &[u8])]) -> Vec<u8> {
@@ -1383,14 +1383,17 @@ mod tests {
 
     #[test]
     fn resolves_map_output_name() {
-        let o = resolve_map_output(&Some(String::new()), &Some("out.x".to_string()), &["in.o".to_string()]);
-        assert_eq!(o.as_deref(), Some("out.map"));
-        let i = resolve_map_output(&Some(String::new()), &None, &["src/main.o".to_string()]);
-        assert_eq!(i.as_deref(), Some("src/main.map"));
-        let n = resolve_map_output(&Some("foo".to_string()), &None, &[]);
-        assert_eq!(n.as_deref(), Some("foo.map"));
-        let e = resolve_map_output(&Some("foo.txt".to_string()), &None, &[]);
-        assert_eq!(e.as_deref(), Some("foo.txt"));
+        let empty = String::new();
+        let foo = "foo".to_string();
+        let foo_txt = "foo.txt".to_string();
+        let o = resolve_map_output(Some(&empty), Some(Path::new("out.x")), &["in.o".to_string()]);
+        assert_eq!(o, Some(PathBuf::from("out.map")));
+        let i = resolve_map_output(Some(&empty), None, &["src/main.o".to_string()]);
+        assert_eq!(i, Some(PathBuf::from("src/main.map")));
+        let n = resolve_map_output(Some(&foo), None, &[]);
+        assert_eq!(n, Some(PathBuf::from("foo.map")));
+        let e = resolve_map_output(Some(&foo_txt), None, &[]);
+        assert_eq!(e, Some(PathBuf::from("foo.txt")));
     }
 
     #[test]
@@ -1422,22 +1425,22 @@ mod tests {
             g2lk_on: false,
             inputs: vec!["foo.o".to_string()],
         };
-        assert_eq!(resolve_output_path(&args, &args.inputs), "foo.x");
+        assert_eq!(resolve_output_path(&args, &args.inputs), PathBuf::from("foo.x"));
 
         args.no_x_ext = true;
-        assert_eq!(resolve_output_path(&args, &args.inputs), "foo");
+        assert_eq!(resolve_output_path(&args, &args.inputs), PathBuf::from("foo"));
 
         args.opt_an = true;
-        assert_eq!(resolve_output_path(&args, &args.inputs), "foo.x");
+        assert_eq!(resolve_output_path(&args, &args.inputs), PathBuf::from("foo.x"));
 
         args.output = Some("bar".to_string());
-        assert_eq!(resolve_output_path(&args, &args.inputs), "bar");
+        assert_eq!(resolve_output_path(&args, &args.inputs), PathBuf::from("bar"));
 
         args.r_format = true;
-        assert_eq!(resolve_output_path(&args, &args.inputs), "bar.r");
+        assert_eq!(resolve_output_path(&args, &args.inputs), PathBuf::from("bar.r"));
 
         args.make_mcs = true;
-        assert_eq!(resolve_output_path(&args, &args.inputs), "bar.mcs");
+        assert_eq!(resolve_output_path(&args, &args.inputs), PathBuf::from("bar.mcs"));
     }
 
     #[test]

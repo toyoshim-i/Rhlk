@@ -67,7 +67,7 @@ pub(crate) fn build_map_text(
         .unwrap_or(0);
     let mut out = String::new();
     out.push_str("==========================================================\n");
-    out.push_str(&super::to_human68k_path(exec_output_path));
+    out.push_str(&super::to_human68k_path(Path::new(exec_output_path)));
     out.push('\n');
     out.push_str("==========================================================\n");
     out.push_str(&format_exec_line(exec));
