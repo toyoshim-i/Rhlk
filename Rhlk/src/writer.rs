@@ -1405,6 +1405,9 @@ fn patch_ctor_dtor_tables(
         let Some(base) = global_symbol_addrs.get(CTOR_LIST) else {
             bail!("ctor table symbol is missing: ___CTOR_LIST__");
         };
+        if !matches!(base.section, SectionKind::Text | SectionKind::Data) {
+            bail!("ctor table symbol must be in text/data: ___CTOR_LIST__");
+        }
         let table = build_ctor_dtor_table(&ctor_entries);
         write_table_at_absolute(linked, text_size, base.addr, &table)?;
     }
@@ -1412,6 +1415,9 @@ fn patch_ctor_dtor_tables(
         let Some(base) = global_symbol_addrs.get(DTOR_LIST) else {
             bail!("dtor table symbol is missing: ___DTOR_LIST__");
         };
+        if !matches!(base.section, SectionKind::Text | SectionKind::Data) {
+            bail!("dtor table symbol must be in text/data: ___DTOR_LIST__");
+        }
         let table = build_ctor_dtor_table(&dtor_entries);
         write_table_at_absolute(linked, text_size, base.addr, &table)?;
     }
@@ -3109,6 +3115,49 @@ mod tests {
         let err =
             build_x_image_with_options(&[obj0, obj1], &[sum0, sum1], &layout, false).expect_err("must fail");
         assert!(err.to_string().contains("ctor/dtor table overflows"));
+    }
+
+    #[test]
+    fn ctor_patch_rejects_non_text_data_symbol_section() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::Header {
+                    section: 0x03,
+                    size: 16,
+                    name: b"bss".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0x4e, 0x75]),
+                Command::Opaque {
+                    code: 0x4c01,
+                    payload: vec![0x00, 0x00, 0x00, 0x00],
+                },
+                Command::DefineSymbol {
+                    section: 0x03,
+                    value: 0,
+                    name: b"___CTOR_LIST__".to_vec(),
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut sum = mk_summary(2, 2, 0);
+        sum.declared_section_sizes.insert(SectionKind::Bss, 16);
+        sum.symbols.push(Symbol {
+            name: b"___CTOR_LIST__".to_vec(),
+            section: SectionKind::Bss,
+            value: 0,
+        });
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let err = build_x_image_with_options(&[obj], &[sum], &layout, false).expect_err("must fail");
+        assert!(err
+            .to_string()
+            .contains("ctor table symbol must be in text/data"));
     }
 
     #[test]
