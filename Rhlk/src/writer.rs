@@ -295,7 +295,7 @@ fn build_x_image_with_options(
     let scd_name_size = scd_name.len() as u32;
 
     let exec = resolve_exec_address(summaries, text_size, data_size, bss_size)?.unwrap_or(0);
-    let header = build_x_header(
+    let header = build_x_header(XHeader {
         text_size,
         data_size,
         bss_size,
@@ -305,7 +305,7 @@ fn build_x_image_with_options(
         scd_info_size,
         scd_name_size,
         exec,
-    );
+    });
 
     let mut image = header;
     image.extend_from_slice(&text);
@@ -1123,7 +1123,11 @@ where
             Command::Opaque { code, .. } => {
                 let local = cursor_by_section.get(&current).copied().unwrap_or(0);
                 on_opaque(cmd, current, local, &mut calc_stack);
-                bump_cursor(&mut cursor_by_section, current, opaque_write_size(*code) as u32);
+                bump_cursor(
+                    &mut cursor_by_section,
+                    current,
+                    u32::from(opaque_write_size(*code)),
+                );
             }
             _ => {}
         }
@@ -1463,7 +1467,8 @@ fn usize_to_u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
-fn build_x_header(
+#[derive(Clone, Copy)]
+struct XHeader {
     text_size: u32,
     data_size: u32,
     bss_size: u32,
@@ -1473,21 +1478,23 @@ fn build_x_header(
     scd_info_size: u32,
     scd_name_size: u32,
     exec: u32,
-) -> Vec<u8> {
+}
+
+fn build_x_header(xh: XHeader) -> Vec<u8> {
     let mut h = vec![0u8; 64];
     // 'HU'
     h[0] = b'H';
     h[1] = b'U';
     // load mode = 0, base = 0
-    put_u32_be(&mut h, 8, exec);
-    put_u32_be(&mut h, 12, text_size);
-    put_u32_be(&mut h, 16, data_size);
-    put_u32_be(&mut h, 20, bss_size);
-    put_u32_be(&mut h, 24, reloc_size);
-    put_u32_be(&mut h, 28, symbol_size);
-    put_u32_be(&mut h, 32, scd_line_size);
-    put_u32_be(&mut h, 36, scd_info_size);
-    put_u32_be(&mut h, 40, scd_name_size);
+    put_u32_be(&mut h, 8, xh.exec);
+    put_u32_be(&mut h, 12, xh.text_size);
+    put_u32_be(&mut h, 16, xh.data_size);
+    put_u32_be(&mut h, 20, xh.bss_size);
+    put_u32_be(&mut h, 24, xh.reloc_size);
+    put_u32_be(&mut h, 28, xh.symbol_size);
+    put_u32_be(&mut h, 32, xh.scd_line_size);
+    put_u32_be(&mut h, 36, xh.scd_info_size);
+    put_u32_be(&mut h, 40, xh.scd_name_size);
     h
 }
 
@@ -1761,8 +1768,14 @@ mod tests {
         };
         let mut sum = mk_summary(2, 2, 0);
         sum.declared_section_sizes.insert(SectionKind::Bss, 4);
-        let layout = plan_layout(&[sum.clone()]);
-        let with_bss = build_r_payload(&[obj.clone()], &[sum.clone()], &layout, false).expect("r with bss");
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let with_bss = build_r_payload(
+            std::slice::from_ref(&obj),
+            std::slice::from_ref(&sum),
+            &layout,
+            false,
+        )
+        .expect("r with bss");
         let without_bss = build_r_payload(&[obj], &[sum], &layout, true).expect("r without bss");
         assert_eq!(with_bss.len(), without_bss.len() + 4);
         assert_eq!(&with_bss[0..2], &[0xde, 0xad]);
@@ -1814,7 +1827,7 @@ mod tests {
             value: 1,
         });
 
-        let layout = plan_layout(&[sum.clone()]);
+        let layout = plan_layout(std::slice::from_ref(&sum));
         let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
 
         assert_eq!(&image[0..2], b"HU");
@@ -1858,8 +1871,13 @@ mod tests {
             value: 0,
         });
         let layout = plan_layout(std::slice::from_ref(&sum));
-        let with_symbols =
-            build_x_image_with_options(&[obj.clone()], &[sum.clone()], &layout, true).expect("x image");
+        let with_symbols = build_x_image_with_options(
+            std::slice::from_ref(&obj),
+            std::slice::from_ref(&sum),
+            &layout,
+            true,
+        )
+        .expect("x image");
         let without_symbols = build_x_image_with_options(&[obj], &[sum], &layout, false).expect("x image");
 
         let with_sym_size =
@@ -1991,7 +2009,7 @@ mod tests {
             scd_tail: Vec::new(),
         };
         let sum = mk_summary(2, 14, 0);
-        let layout = plan_layout(&[sum.clone()]);
+        let layout = plan_layout(std::slice::from_ref(&sum));
         let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
         let reloc_size = u32::from_be_bytes([image[24], image[25], image[26], image[27]]) as usize;
         assert_eq!(reloc_size, 4);
@@ -2160,7 +2178,7 @@ mod tests {
             scd_tail: Vec::new(),
         };
         let sum = mk_summary(2, 4, 0);
-        let layout = plan_layout(&[sum.clone()]);
+        let layout = plan_layout(std::slice::from_ref(&sum));
         let err = validate_r_convertibility(&[obj], &[sum], &layout, "out.r")
             .expect_err("should reject conversion");
         assert!(err.to_string().contains("再配置テーブルが使われています"));
@@ -2185,7 +2203,7 @@ mod tests {
         };
         let mut sum = mk_summary(2, 2, 0);
         sum.start_address = Some((0x02, 1));
-        let layout = plan_layout(&[sum.clone()]);
+        let layout = plan_layout(std::slice::from_ref(&sum));
         let err = validate_r_convertibility(&[obj], &[sum], &layout, "out.r")
             .expect_err("should reject conversion");
         assert!(err.to_string().contains("実行開始アドレスがファイル先頭ではありません"));
@@ -2234,7 +2252,7 @@ mod tests {
             scd_tail: Vec::new(),
         };
         let sum = mk_summary(2, 6, 0);
-        let layout = plan_layout(&[sum.clone()]);
+        let layout = plan_layout(std::slice::from_ref(&sum));
         let err = build_x_image(&[obj], &[sum], &layout).expect_err("must reject odd relocation");
         assert!(err.to_string().contains("relocation target address is odd"));
     }
@@ -3001,7 +3019,7 @@ mod tests {
         };
         let mut sum = mk_summary(2, 2, 2);
         sum.declared_section_sizes.insert(SectionKind::Bss, 4);
-        let layout = plan_layout(&[sum.clone()]);
+        let layout = plan_layout(std::slice::from_ref(&sum));
         let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
 
         let text_size = u32::from_be_bytes([image[12], image[13], image[14], image[15]]) as usize;
@@ -3188,7 +3206,7 @@ mod tests {
             ],
         };
         let sum = mk_summary(2, 2, 0);
-        let layout = plan_layout(&[sum.clone()]);
+        let layout = plan_layout(std::slice::from_ref(&sum));
         let err = build_x_image(&[obj], &[sum], &layout).expect_err("must reject unsupported stack sect");
         assert!(err.to_string().contains("unsupported SCD einfo section"));
     }
@@ -3220,7 +3238,7 @@ mod tests {
             ],
         };
         let sum = mk_summary(2, 2, 0);
-        let layout = plan_layout(&[sum.clone()]);
+        let layout = plan_layout(std::slice::from_ref(&sum));
         let err = build_x_image(&[obj], &[sum], &layout)
             .expect_err("must reject unsupported common reference");
         assert!(err.to_string().contains("SCD einfo common-reference"));
@@ -3258,7 +3276,7 @@ mod tests {
             section: SectionKind::Common,
             value: 8,
         });
-        let layout = plan_layout(&[sum.clone()]);
+        let layout = plan_layout(std::slice::from_ref(&sum));
         let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
 
         let text_size = u32::from_be_bytes([image[12], image[13], image[14], image[15]]) as usize;
@@ -4159,7 +4177,7 @@ mod tests {
                 },
                 Command::ChangeSection { section: 0x01 },
                 Command::Opaque {
-                    code: 0x6b00 | lo as u16,
+                    code: 0x6b00 | u16::from(lo),
                     payload: vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
                 },
                 Command::End,
@@ -4381,12 +4399,12 @@ mod tests {
             commands: vec![
                 Command::Header {
                     section: 0x01,
-                    size: expected.len() as u32,
+                    size: super::usize_to_u32_saturating(expected.len()),
                     name: b"text".to_vec(),
                 },
                 Command::ChangeSection { section: 0x01 },
                 Command::Opaque {
-                    code: ((code_hi as u16) << 8) | lo as u16,
+                    code: (u16::from(code_hi) << 8) | u16::from(lo),
                     payload: vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
                 },
                 Command::End,
@@ -4406,7 +4424,7 @@ mod tests {
             ],
             scd_tail: Vec::new(),
         };
-        let mut s0 = mk_summary(2, expected.len() as u32, 0);
+        let mut s0 = mk_summary(2, super::usize_to_u32_saturating(expected.len()), 0);
         s0.xrefs.push(Symbol {
             name: b"_sym".to_vec(),
             section: SectionKind::Xref,
