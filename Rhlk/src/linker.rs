@@ -183,4 +183,24 @@ mod tests {
         let _ = fs::remove_file(sub);
         let _ = fs::remove_dir(dir);
     }
+
+    #[test]
+    fn reports_missing_requested_object() {
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rhlk-linker-test-{uniq}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+
+        let main = dir.join("main.o");
+        fs::write(&main, [0xe0, 0x01, b'n', b'o', b'n', b'e', b'.', b'o', 0x00, 0x00]).expect("write main");
+
+        let inputs = vec![main.to_string_lossy().to_string()];
+        let err = load_objects_with_requests(&inputs, false).expect_err("must fail");
+        assert!(err.to_string().contains("ファイルがありません: none.o"));
+
+        let _ = fs::remove_file(main);
+        let _ = fs::remove_dir(dir);
+    }
 }
