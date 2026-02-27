@@ -638,25 +638,31 @@ fn einfo_section_delta(
         .get(&SectionKind::Bss)
         .copied()
         .unwrap_or(0) as i64;
-    let common_total = layout
-        .total_size_by_section
-        .get(&SectionKind::Common)
-        .copied()
-        .unwrap_or(0) as i64;
-    let stack_total = layout
-        .total_size_by_section
-        .get(&SectionKind::Stack)
-        .copied()
-        .unwrap_or(0) as i64;
+    let common_total = i64::from(
+        layout
+            .total_size_by_section
+            .get(&SectionKind::Common)
+            .copied()
+            .unwrap_or(0),
+    );
+    let stack_total = i64::from(
+        layout
+            .total_size_by_section
+            .get(&SectionKind::Stack)
+            .copied()
+            .unwrap_or(0),
+    );
     let obj_size = text_total + data_total + bss_total + common_total + stack_total;
 
-    let text_pos = placement.get(&SectionKind::Text).copied().unwrap_or(0) as i64;
-    let data_pos = text_total + placement.get(&SectionKind::Data).copied().unwrap_or(0) as i64;
-    let bss_pos = text_total + data_total + placement.get(&SectionKind::Bss).copied().unwrap_or(0) as i64;
-    let rdata_pos = placement.get(&SectionKind::RData).copied().unwrap_or(0) as i64;
-    let rbss_pos = placement.get(&SectionKind::RBss).copied().unwrap_or(0) as i64;
-    let rldata_pos = placement.get(&SectionKind::RLData).copied().unwrap_or(0) as i64;
-    let rlbss_pos = placement.get(&SectionKind::RLBss).copied().unwrap_or(0) as i64;
+    let text_pos = i64::from(placement.get(&SectionKind::Text).copied().unwrap_or(0));
+    let data_pos = text_total + i64::from(placement.get(&SectionKind::Data).copied().unwrap_or(0));
+    let bss_pos = text_total
+        + data_total
+        + i64::from(placement.get(&SectionKind::Bss).copied().unwrap_or(0));
+    let rdata_pos = i64::from(placement.get(&SectionKind::RData).copied().unwrap_or(0));
+    let rbss_pos = i64::from(placement.get(&SectionKind::RBss).copied().unwrap_or(0));
+    let rldata_pos = i64::from(placement.get(&SectionKind::RLData).copied().unwrap_or(0));
+    let rlbss_pos = i64::from(placement.get(&SectionKind::RLBss).copied().unwrap_or(0));
 
     match sect {
         0x0001 => Some(text_pos),
@@ -1044,7 +1050,11 @@ fn collect_object_relocations(
                 current = SectionKind::from_u8(*section);
             }
             Command::RawData(bytes) => {
-                bump_cursor(&mut cursor_by_section, current, bytes.len() as u32);
+                bump_cursor(
+                    &mut cursor_by_section,
+                    current,
+                    usize_to_u32_saturating(bytes.len()),
+                );
             }
             Command::DefineSpace { size } => {
                 bump_cursor(&mut cursor_by_section, current, *size);
@@ -1060,7 +1070,6 @@ fn collect_object_relocations(
                 {
                     let local = cursor_by_section.get(&current).copied().unwrap_or(0);
                     let section_base = match current {
-                        SectionKind::Text => 0,
                         SectionKind::Data => total_text_size,
                         _ => 0,
                     };
@@ -1068,7 +1077,7 @@ fn collect_object_relocations(
                     out.push(section_base.saturating_add(placed).saturating_add(local));
                 }
 
-                bump_cursor(&mut cursor_by_section, current, write_size as u32);
+                bump_cursor(&mut cursor_by_section, current, u32::from(write_size));
             }
             _ => {}
         }
@@ -1076,7 +1085,7 @@ fn collect_object_relocations(
 }
 
 fn opaque_write_size(code: u16) -> u8 {
-    let hi = (code >> 8) as u8;
+    let hi = code_hi(code);
     match hi {
         0x40 | 0x50 | opcode::OPH_WRT_STK_BYTE => 2,
         0x43 | 0x53 | 0x57 | 0x6b | opcode::OPH_WRT_STK_BYTE_RAW => 1,
@@ -1087,7 +1096,7 @@ fn opaque_write_size(code: u16) -> u8 {
 }
 
 fn needs_relocation(code: u16) -> bool {
-    matches!((code >> 8) as u8, 0x42 | 0x46 | 0x52 | 0x56 | 0x6a)
+    matches!(code_hi(code), 0x42 | 0x46 | 0x52 | 0x56 | 0x6a)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1115,7 +1124,11 @@ where
                 current = SectionKind::from_u8(*section);
             }
             Command::RawData(bytes) => {
-                bump_cursor(&mut cursor_by_section, current, bytes.len() as u32);
+                bump_cursor(
+                    &mut cursor_by_section,
+                    current,
+                    usize_to_u32_saturating(bytes.len()),
+                );
             }
             Command::DefineSpace { size } => {
                 bump_cursor(&mut cursor_by_section, current, *size);
@@ -3035,6 +3048,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn rebases_remaining_scd_einfo_section_branches() {
         let obj0 = ObjectFile {
             commands: vec![

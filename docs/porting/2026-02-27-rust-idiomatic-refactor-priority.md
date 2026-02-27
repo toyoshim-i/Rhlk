@@ -187,6 +187,8 @@
   - `resolve_exec_address` / 診断処理まわりで `as` 縮小変換、`single_match`, `if_not_else` を解消。
   - テストコードを `std::slice::from_ref` に統一し、不要 clone を削減。
   - `build_x_header` を `XHeader` struct 引数化して多引数警告を解消。
+  - `main.rs` / `cli.rs` の `similar_names` を命名修正で解消。
+  - `writer.rs` の `u32 -> i64` / `usize -> u32` 変換を `From` / helper 経由へ統一。
 - P3-3: 完了
   - `format/obj.rs` の opaque opcode 判定分岐を整理し、重複 arm を統合。
   - `is_label_section` を range pattern 化、`align_even` を `is_multiple_of` ベースへ更新。

@@ -184,34 +184,34 @@ mod tests {
 
     #[test]
     fn finalizes_verbose_by_last_switch() {
-        let argv = vec![
+        let cli_argv = vec![
             OsString::from("rhlk"),
             OsString::from("-v"),
             OsString::from("-z"),
         ];
-        let mut args = Args::parse_from(argv.iter().cloned());
-        finalize_compat_args(&mut args, &argv).expect("finalize");
-        assert!(!args.verbose);
+        let mut parsed_args = Args::parse_from(cli_argv.iter().cloned());
+        finalize_compat_args(&mut parsed_args, &cli_argv).expect("finalize");
+        assert!(!parsed_args.verbose);
 
-        let argv2 = vec![
+        let cli_argv2 = vec![
             OsString::from("rhlk"),
             OsString::from("--quiet"),
             OsString::from("--verbose"),
         ];
-        let mut args2 = Args::parse_from(argv2.iter().cloned());
-        finalize_compat_args(&mut args2, &argv2).expect("finalize");
-        assert!(args2.verbose);
+        let mut parsed_args2 = Args::parse_from(cli_argv2.iter().cloned());
+        finalize_compat_args(&mut parsed_args2, &cli_argv2).expect("finalize");
+        assert!(parsed_args2.verbose);
     }
 
     #[test]
     fn rejects_mutually_exclusive_g2lk_switches() {
-        let argv = vec![
+        let cli_argv = vec![
             OsString::from("rhlk"),
             OsString::from("--g2lk-off"),
             OsString::from("--g2lk-on"),
         ];
-        let mut args = Args::parse_from(argv.iter().cloned());
-        let err = finalize_compat_args(&mut args, &argv).expect_err("must fail");
+        let mut parsed_args = Args::parse_from(cli_argv.iter().cloned());
+        let err = finalize_compat_args(&mut parsed_args, &cli_argv).expect_err("must fail");
         assert!(err.contains("mutually exclusive"));
     }
 
