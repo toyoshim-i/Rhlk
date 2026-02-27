@@ -1692,6 +1692,7 @@ fn classify_expression_errors(
         _ => &[],
     };
     match hi {
+        0xe0 if matches!(lo, 0x0c | 0x0d) => vec![".doctor/.dodtor は未対応です"],
         0x80 => {
             if calc_stack.len() >= CALC_STACK_SIZE_HLK {
                 return vec!["計算用スタックが溢れました"];
@@ -2825,6 +2826,30 @@ mod tests {
         let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)])
             .expect_err("must reject ctor/dtor command");
         assert!(err.to_string().contains(".ctor/.dtor は未対応です"));
+    }
+
+    #[test]
+    fn rejects_unimplemented_doctor_dodtor_commands() {
+        for code in [0xe00c, 0xe00d] {
+            let obj = ObjectFile {
+                commands: vec![
+                    Command::Header {
+                        section: 0x01,
+                        size: 0,
+                        name: b"text".to_vec(),
+                    },
+                    Command::Opaque {
+                        code,
+                        payload: Vec::new(),
+                    },
+                    Command::End,
+                ],
+                scd_tail: Vec::new(),
+            };
+            let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)])
+                .expect_err("must reject doctor/dodtor command");
+            assert!(err.to_string().contains(".doctor/.dodtor は未対応です"));
+        }
     }
 
     #[test]
