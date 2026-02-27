@@ -123,46 +123,62 @@ fn build_map_text(
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
     let mut out = String::new();
-    out.push_str("# rhlk map\n");
-    out.push_str(&format!("EXEC    {exec:08X}\n"));
-    out.push_str("# sections\n");
+    out.push_str("==========================================================\n");
+    out.push_str("rhlk map\n");
+    out.push_str("==========================================================\n");
+    out.push_str(&format_section_line("exec", exec, 1));
     let text_sz = section_total(layout, SectionKind::Text);
     let data_sz = section_total(layout, SectionKind::Data);
     let bss_sz = section_total(layout, SectionKind::Bss);
     let common_sz = section_total(layout, SectionKind::Common);
     let stack_sz = section_total(layout, SectionKind::Stack);
     let mut cur = 0u32;
-    out.push_str(&format!("TEXT    start={cur:08X} size={text_sz:08X}\n"));
+    out.push_str(&format_section_line("text", cur, text_sz));
     cur = cur.saturating_add(text_sz);
-    out.push_str(&format!("DATA    start={cur:08X} size={data_sz:08X}\n"));
+    out.push_str(&format_section_line("data", cur, data_sz));
     cur = cur.saturating_add(data_sz);
-    out.push_str(&format!("BSS     start={cur:08X} size={bss_sz:08X}\n"));
+    out.push_str(&format_section_line("bss", cur, bss_sz));
     cur = cur.saturating_add(bss_sz);
-    out.push_str(&format!("COMMON  start={cur:08X} size={common_sz:08X}\n"));
+    out.push_str(&format_section_line("common", cur, common_sz));
     cur = cur.saturating_add(common_sz);
-    out.push_str(&format!("STACK   start={cur:08X} size={stack_sz:08X}\n"));
+    out.push_str(&format_section_line("stack", cur, stack_sz));
 
     let mut rcur = 0u32;
     for (name, kind) in [
-        ("RDATA", SectionKind::RData),
-        ("RBSS", SectionKind::RBss),
-        ("RCOMMON", SectionKind::RCommon),
-        ("RSTACK", SectionKind::RStack),
-        ("RLDATA", SectionKind::RLData),
-        ("RLBSS", SectionKind::RLBss),
-        ("RLCOMMON", SectionKind::RLCommon),
-        ("RLSTACK", SectionKind::RLStack),
+        ("rdata", SectionKind::RData),
+        ("rbss", SectionKind::RBss),
+        ("rcommon", SectionKind::RCommon),
+        ("rstack", SectionKind::RStack),
+        ("rldata", SectionKind::RLData),
+        ("rlbss", SectionKind::RLBss),
+        ("rlcommon", SectionKind::RLCommon),
+        ("rlstack", SectionKind::RLStack),
     ] {
         let sz = section_total(layout, kind);
-        out.push_str(&format!("{name:<8} start={rcur:08X} size={sz:08X}\n"));
+        out.push_str(&format_section_line(name, rcur, sz));
         rcur = rcur.saturating_add(sz);
     }
 
-    out.push_str("# address  section  symbol\n");
+    out.push_str("-------------------------- xdef --------------------------\n");
     for (addr, sect, name) in rows {
         out.push_str(&format!("{addr:08X} {sect:<7} {name}\n"));
     }
     out
+}
+
+fn format_section_line(name: &str, pos: u32, size: u32) -> String {
+    let mut label = String::from(name);
+    while label.len() < 24 {
+        label.push(' ');
+    }
+    label.push_str(" : ");
+    if size == 0 {
+        label.push('\n');
+        return label;
+    }
+    let end = pos.saturating_add(size).saturating_sub(1);
+    label.push_str(&format!("{pos:08X} - {end:08X} ({size:08X})\n"));
+    label
 }
 
 fn section_total(layout: &LayoutPlan, section: SectionKind) -> u32 {
@@ -2303,10 +2319,11 @@ mod tests {
         });
         let layout = plan_layout(&[s0.clone(), s1.clone()]);
         let text = build_map_text(&[s0, s1], &layout, 4, 2, 0, 0);
-        assert!(text.contains("# rhlk map"));
-        assert!(text.contains("EXEC    00000000"));
-        assert!(text.contains("TEXT    start=00000000 size=00000004"));
-        assert!(text.contains("DATA    start=00000004 size=00000002"));
+        assert!(text.contains("=========================================================="));
+        assert!(text.contains("exec                     : 00000000 - 00000000 (00000001)"));
+        assert!(text.contains("text                     : 00000000 - 00000003 (00000004)"));
+        assert!(text.contains("data                     : 00000004 - 00000005 (00000002)"));
+        assert!(text.contains("-------------------------- xdef --------------------------"));
         assert!(text.contains("00000000 TEXT    _text0"));
         assert!(text.contains("00000005 DATA    _data0"));
     }
