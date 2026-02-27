@@ -183,6 +183,8 @@
 - P3-2: 進行中
   - `writer.rs` の `patch_opaque` 系で数値変換 helper（`code_hi/lo`, `i32_low_u8/u16`, bit-cast helper）を導入。
   - `label_no as u32` 等を `u32::from(...)` に置換し、意図しない縮小 cast を削減。
+  - `patch_opaque_commands` を `Result<()>` から副作用関数へ整理し、不要な `?` を除去。
+  - `resolve_exec_address` / 診断処理まわりで `as` 縮小変換、`single_match`, `if_not_else` を解消。
 - P3-3: 完了
   - `format/obj.rs` の opaque opcode 判定分岐を整理し、重複 arm を統合。
   - `is_label_section` を range pattern 化、`align_even` を `is_multiple_of` ベースへ更新。

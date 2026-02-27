@@ -268,7 +268,7 @@ fn build_x_image_with_options(
         summaries,
         layout,
         &global_symbol_addrs,
-    )?;
+    );
     ctor_dtor::patch_ctor_dtor_tables(&mut linked, objects, layout, &global_symbol_addrs, text_size)?;
 
     let text = linked.get(&SectionKind::Text).cloned().unwrap_or_default();
@@ -1185,16 +1185,15 @@ fn patch_opaque_commands(
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
     global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
-) -> Result<()> {
+) {
     for (idx, (obj, summary)) in objects.iter().zip(summaries.iter()).enumerate() {
         walk_opaque_commands(obj, |cmd, current, local, calc_stack| {
             let Command::Opaque { code, payload } = cmd else {
                 return;
             };
-            let hi = (*code >> 8) as u8;
-            let lo = *code as u8;
+            let [hi, lo] = code.to_be_bytes();
             if hi == 0x80 {
-                            if let Some(entry) =
+                if let Some(entry) =
                     evaluate_push_80_for_patch(lo, payload, summary, global_symbol_addrs)
                 {
                     calc_stack.push(entry);
@@ -1228,7 +1227,6 @@ fn patch_opaque_commands(
             }
         });
     }
-    Ok(())
 }
 
 fn materialize_stack_write_opaque(code: u16, calc_stack: &mut Vec<ExprEntry>) -> Option<Vec<u8>> {
@@ -1461,6 +1459,10 @@ fn u32_bits_to_i32(value: u32) -> i32 {
     i32::from_be_bytes(value.to_be_bytes())
 }
 
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
 fn build_x_header(
     text_size: u32,
     data_size: u32,
@@ -1506,8 +1508,7 @@ fn resolve_exec_address(
         return Ok(None);
     };
     let (sect, addr) = start;
-    let base = match sect as u8 {
-        0x01 => 0,
+    let base = match sect {
         0x02 => text_size,
         0x03 => text_size.saturating_add(data_size),
         _ => 0,
@@ -1543,8 +1544,7 @@ fn validate_unsupported_expression_commands(
             .get(obj_idx)
             .and_then(|p| std::path::Path::new(p).file_name())
             .and_then(|s| s.to_str())
-            .map(|s| s.to_owned())
-            .unwrap_or_else(|| format!("obj{obj_idx}.o"));
+            .map_or_else(|| format!("obj{obj_idx}.o"), std::borrow::ToOwned::to_owned);
         let mut has_ctor = false;
         let mut has_dtor = false;
         let mut has_doctor = false;
@@ -1554,13 +1554,12 @@ fn validate_unsupported_expression_commands(
         let mut ctor_header_size = None::<u32>;
         let mut dtor_header_size = None::<u32>;
         for cmd in &obj.commands {
-            match cmd {
-                Command::Header { section, size, .. } => match *section {
+            if let Command::Header { section, size, .. } = cmd {
+                match *section {
                     0x0c => ctor_header_size = Some(*size),
                     0x0d => dtor_header_size = Some(*size),
                     _ => {}
-                },
-                _ => {}
+                }
             }
         }
         walk_opaque_commands(obj, |cmd, current, local, calc_stack| {
@@ -1595,22 +1594,20 @@ fn validate_unsupported_expression_commands(
                 ));
             }
         });
-        if !g2lk_mode {
-            if has_ctor || has_dtor || has_doctor || has_dodtor {
-                diagnostics.push(format!(
-                    "(do)ctor/dtor には -1 オプションの指定が必要です。 in {obj_name}"
-                ));
-            }
-        } else {
+        if g2lk_mode {
             if has_ctor && !has_doctor {
                 diagnostics.push(format!(".doctor なしで .ctor が使われています in {obj_name}"));
             }
             if has_dtor && !has_dodtor {
                 diagnostics.push(format!(".dodtor なしで .dtor が使われています in {obj_name}"));
             }
+        } else if has_ctor || has_dtor || has_doctor || has_dodtor {
+            diagnostics.push(format!(
+                "(do)ctor/dtor には -1 オプションの指定が必要です。 in {obj_name}"
+            ));
         }
         if let Some(size) = ctor_header_size {
-            let expected = (ctor_count as u32).saturating_mul(4);
+            let expected = usize_to_u32_saturating(ctor_count).saturating_mul(4);
             if size != expected {
                 diagnostics.push(format!(
                     "ctor header size mismatch in {obj_name}: header={size} expected={expected}"
@@ -1618,7 +1615,7 @@ fn validate_unsupported_expression_commands(
             }
         }
         if let Some(size) = dtor_header_size {
-            let expected = (dtor_count as u32).saturating_mul(4);
+            let expected = usize_to_u32_saturating(dtor_count).saturating_mul(4);
             if size != expected {
                 diagnostics.push(format!(
                     "dtor header size mismatch in {obj_name}: header={size} expected={expected}"
