@@ -104,17 +104,29 @@ run_linker() {
   local stderr_file="${out_prefix}.stderr"
   local msg_file="${out_prefix}.msg"
   local rc_file="${out_prefix}.rc"
+  local map_out
+  if [[ "${out_file}" == *.* ]]; then
+    map_out="${out_file%.*}.map"
+  else
+    map_out="${out_file}.map"
+  fi
 
   set +e
   (
     cd "${TEST_DIR}"
     rm -f "${out_file}"
+    rm -f "${map_out}"
     "${cmd[@]}" ${flags} -o "${out_file}" ${objects}
   ) >"${stdout_file}" 2>"${stderr_file}"
   local rc=$?
   set -e
   echo "${rc}" >"${rc_file}"
   cat "${stdout_file}" "${stderr_file}" >"${msg_file}"
+  if [[ -f "${TEST_DIR}/${map_out}" ]]; then
+    cp "${TEST_DIR}/${map_out}" "${out_prefix}.map"
+  else
+    rm -f "${out_prefix}.map"
+  fi
   return 0
 }
 
@@ -149,6 +161,18 @@ compare_case() {
       failed=1
     elif ! cmp -s "${orig_out}" "${rhlk_out}"; then
       echo "[${name}] output binary differs (${ext})" >>"${diff_file}"
+      failed=1
+    fi
+  fi
+
+  local orig_map="${orig_prefix}.map"
+  local rhlk_map="${rhlk_prefix}.map"
+  if [[ -f "${orig_map}" || -f "${rhlk_map}" ]]; then
+    if [[ ! -f "${orig_map}" || ! -f "${rhlk_map}" ]]; then
+      echo "[${name}] map output existence differs" >>"${diff_file}"
+      failed=1
+    elif ! cmp -s "${orig_map}" "${rhlk_map}"; then
+      echo "[${name}] map output differs" >>"${diff_file}"
       failed=1
     fi
   fi
