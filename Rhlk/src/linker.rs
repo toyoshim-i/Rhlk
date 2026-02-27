@@ -1,4 +1,6 @@
-use crate::cli::{Args, G2lkMode, OutputRequest};
+use crate::cli::{
+    Args, BssMode, G2lkMode, OutputRequest, RelocationCheckMode, RuntimeConfig, SymbolMode,
+};
 use crate::format::FormatError;
 use crate::format::obj::{Command, ObjectFile, parse_object};
 use crate::layout::plan_layout;
@@ -18,16 +20,16 @@ use std::path::{Path, PathBuf};
 /// Returns an error when input expansion, parsing, validation, layout, or output emission fails.
 pub fn run(args: Args) -> anyhow::Result<()> {
     validate_args(&args)?;
-    print_title_if_needed(&args);
-    let g2lk_mode = args.g2lk_mode();
+    let runtime = args.runtime_config();
+    print_title_if_needed(runtime);
     let expanded_inputs = expand_inputs(&args)?;
-    let prepared = prepare_objects(args, expanded_inputs, g2lk_mode)?;
+    let prepared = prepare_objects(args, runtime, expanded_inputs)?;
     emit_outputs(prepared)
 }
 
 struct PreparedLink {
     args: Args,
-    g2lk_mode: G2lkMode,
+    runtime: RuntimeConfig,
     expanded_inputs: Vec<String>,
     objects: Vec<ObjectFile>,
     summaries: Vec<ObjectSummary>,
@@ -43,8 +45,8 @@ fn validate_args(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn print_title_if_needed(args: &Args) {
-    if args.title {
+fn print_title_if_needed(runtime: RuntimeConfig) {
+    if runtime.title {
         println!("rhlk {}", env!("CARGO_PKG_VERSION"));
     }
 }
@@ -63,17 +65,18 @@ fn expand_inputs(args: &Args) -> anyhow::Result<Vec<String>> {
 
 fn prepare_objects(
     args: Args,
+    runtime: RuntimeConfig,
     expanded_inputs: Vec<String>,
-    g2lk_mode: G2lkMode,
 ) -> anyhow::Result<PreparedLink> {
-    let (objects, summaries, input_names) = load_objects_with_requests(&expanded_inputs, args.verbose)?;
+    let (objects, summaries, input_names) =
+        load_objects_with_requests(&expanded_inputs, runtime.verbose)?;
     let mut objects = objects;
     let mut summaries = summaries;
     let mut input_names = input_names;
     if !args.defines.is_empty() {
         inject_define_symbols(&args, &mut objects, &mut summaries, &mut input_names);
     }
-    if args.section_info {
+    if runtime.section_info {
         inject_section_info_object(&mut objects, &mut summaries, &mut input_names);
     }
     if let Some(align) = args.align {
@@ -89,7 +92,7 @@ fn prepare_objects(
 
     Ok(PreparedLink {
         args,
-        g2lk_mode,
+        runtime,
         expanded_inputs,
         objects,
         summaries,
@@ -100,7 +103,7 @@ fn prepare_objects(
 fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
     let PreparedLink {
         args,
-        g2lk_mode,
+        runtime,
         expanded_inputs,
         objects,
         mut summaries,
@@ -108,10 +111,10 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
     } = prepared;
     let args = &args;
     let layout = plan_layout(&summaries);
-    if args.section_info {
+    if runtime.section_info {
         update_section_info_rsize(&mut summaries, &layout);
     }
-    if args.verbose {
+    if runtime.verbose {
         println!("layout totals:");
         for (section, size) in &layout.total_size_by_section {
             println!("  {section:?}: {size}");
@@ -125,30 +128,27 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
     let output = resolve_output_path(args, &expanded_inputs);
     let output_s = output.to_string_lossy().to_string();
     let options = OutputOptions {
-        format: match args.output_request() {
+        format: match runtime.output_request {
             OutputRequest::X => OutputFormat::X,
             OutputRequest::R => OutputFormat::R,
             OutputRequest::Mcs => OutputFormat::Mcs,
         },
-        relocation_check: if args.r_no_check {
-            RelocationCheck::Skip
-        } else {
-            RelocationCheck::Strict
+        relocation_check: match runtime.relocation_check {
+            RelocationCheckMode::Strict => RelocationCheck::Strict,
+            RelocationCheckMode::Skip => RelocationCheck::Skip,
         },
-        bss_policy: if args.omit_bss {
-            BssPolicy::Omit
-        } else {
-            BssPolicy::Include
+        bss_policy: match runtime.bss_mode {
+            BssMode::Include => BssPolicy::Include,
+            BssMode::Omit => BssPolicy::Omit,
         },
-        symbol_table: if args.cut_symbols {
-            SymbolTablePolicy::Cut
-        } else {
-            SymbolTablePolicy::Keep
+        symbol_table: match runtime.symbol_mode {
+            SymbolMode::Keep => SymbolTablePolicy::Keep,
+            SymbolMode::Cut => SymbolTablePolicy::Cut,
         },
-        base_address: args.base_address.unwrap_or(0),
-        load_mode: args.load_mode.unwrap_or(0),
-        section_info: args.section_info,
-        g2lk_mode: matches!(g2lk_mode, G2lkMode::On),
+        base_address: runtime.base_address,
+        load_mode: runtime.load_mode,
+        section_info: runtime.section_info,
+        g2lk_mode: matches!(runtime.g2lk_mode, G2lkMode::On),
     };
     write_output(
         &output_s,
@@ -158,18 +158,18 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
         &summaries,
         &layout,
     )?;
-    if args.verbose {
+    if runtime.verbose {
         println!("wrote output: {}", output.display());
     }
     if let Some(map_output) = resolve_map_output(args.map.as_ref(), Some(output.as_path()), &expanded_inputs) {
         let map_output_s = map_output.to_string_lossy().to_string();
         write_map(&output_s, &map_output_s, &summaries, &layout, &input_names)?;
-        if args.verbose {
+        if runtime.verbose {
             println!("wrote map: {}", map_output.display());
         }
     }
 
-    if args.verbose {
+    if runtime.verbose {
         println!("rhlk: parsed {} input file(s)", input_names.len());
     }
     Ok(())

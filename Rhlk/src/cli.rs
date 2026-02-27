@@ -14,6 +14,38 @@ pub enum OutputRequest {
     Mcs,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelocationCheckMode {
+    Strict,
+    Skip,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BssMode {
+    Include,
+    Omit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolMode {
+    Keep,
+    Cut,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeConfig {
+    pub g2lk_mode: G2lkMode,
+    pub output_request: OutputRequest,
+    pub relocation_check: RelocationCheckMode,
+    pub bss_mode: BssMode,
+    pub symbol_mode: SymbolMode,
+    pub section_info: bool,
+    pub verbose: bool,
+    pub title: bool,
+    pub base_address: u32,
+    pub load_mode: u8,
+}
+
 #[derive(Debug, Clone)]
 pub struct DefineArg {
     pub name: String,
@@ -212,6 +244,34 @@ impl Args {
             OutputRequest::R
         } else {
             OutputRequest::X
+        }
+    }
+
+    #[must_use]
+    pub fn runtime_config(&self) -> RuntimeConfig {
+        RuntimeConfig {
+            g2lk_mode: self.g2lk_mode(),
+            output_request: self.output_request(),
+            relocation_check: if self.r_no_check {
+                RelocationCheckMode::Skip
+            } else {
+                RelocationCheckMode::Strict
+            },
+            bss_mode: if self.omit_bss {
+                BssMode::Omit
+            } else {
+                BssMode::Include
+            },
+            symbol_mode: if self.cut_symbols {
+                SymbolMode::Cut
+            } else {
+                SymbolMode::Keep
+            },
+            section_info: self.section_info,
+            verbose: self.verbose,
+            title: self.title,
+            base_address: self.base_address.unwrap_or(0),
+            load_mode: self.load_mode.unwrap_or(0),
         }
     }
 }
