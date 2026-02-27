@@ -12,6 +12,9 @@ pub fn run(args: Args) -> anyhow::Result<()> {
     if args.inputs.is_empty() {
         anyhow::bail!("no input files")
     }
+    if args.title {
+        println!("rhlk {}", env!("CARGO_PKG_VERSION"));
+    }
 
     let (objects, summaries, input_names) = load_objects_with_requests(&args.inputs, args.verbose)?;
     validate_unresolved_symbols(&summaries, &input_names)?;
@@ -980,6 +983,7 @@ mod tests {
             verbose: false,
             quiet: false,
             warn_off: false,
+            title: false,
             inputs: vec!["foo.o".to_string()],
         };
         assert_eq!(resolve_output_path(&args, &args.inputs), "foo.x");
@@ -1024,6 +1028,7 @@ mod tests {
             verbose: false,
             quiet: false,
             warn_off: false,
+            title: false,
             inputs: vec![input.to_string_lossy().to_string()],
         };
         run(args).expect("run");
@@ -1059,6 +1064,7 @@ mod tests {
             verbose: false,
             quiet: false,
             warn_off: false,
+            title: false,
             inputs: vec![input.to_string_lossy().to_string()],
         };
         run(args).expect("run");

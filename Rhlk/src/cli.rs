@@ -39,6 +39,9 @@ pub struct Args {
     #[arg(short = 'w')]
     pub warn_off: bool,
 
+    #[arg(short = 't')]
+    pub title: bool,
+
     #[arg(value_name = "INPUT")]
     pub inputs: Vec<String>,
 }
