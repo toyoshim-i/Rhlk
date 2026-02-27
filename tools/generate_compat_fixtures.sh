@@ -121,6 +121,8 @@ ASM
 ASM
   (cd "${tmp}" && "${HAS_ARR[@]}" -o stk91_main.o stk91_main.s >/dev/null 2>/dev/null)
   cp "${tmp}/stk91_main.o" "${OUT_DIR}/stk91_main.o"
+  cp "${tmp}/stk91_main.o" "${OUT_DIR}/stk99_main.o"
+  perl -0777 -i -pe 's/\x91\x00/\x99\x00/' "${OUT_DIR}/stk99_main.o"
 
   cat > "${tmp}/stk93_main.s" <<'ASM'
 .xref label
@@ -129,6 +131,17 @@ ASM
 ASM
   (cd "${tmp}" && "${HAS_ARR[@]}" -o stk93_main.o stk93_main.s >/dev/null 2>/dev/null)
   cp "${tmp}/stk93_main.o" "${OUT_DIR}/stk93_main.o"
+
+  cat > "${tmp}/stk92_main.s" <<'ASM'
+.xref label
+.dc.l .neg.label
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o stk92_main.o stk92_main.s >/dev/null 2>/dev/null)
+  cp "${tmp}/stk92_main.o" "${OUT_DIR}/stk96_main.o"
+  cp "${tmp}/stk92_main.o" "${OUT_DIR}/stk9a_main.o"
+  perl -0777 -i -pe 's/\x92\x00/\x96\x00/' "${OUT_DIR}/stk96_main.o"
+  perl -0777 -i -pe 's/\x92\x00/\x9a\x00/' "${OUT_DIR}/stk9a_main.o"
 fi
 
 echo "generated fixtures in ${OUT_DIR}"

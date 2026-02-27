@@ -930,7 +930,7 @@ fn opaque_write_size(code: u16) -> u8 {
 }
 
 fn needs_relocation(code: u16) -> bool {
-    matches!((code >> 8) as u8, 0x42 | 0x46 | 0x52 | 0x56 | 0x6a | 0x9a)
+    matches!((code >> 8) as u8, 0x42 | 0x46 | 0x52 | 0x56 | 0x6a)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1191,10 +1191,6 @@ fn should_relocate(
 ) -> bool {
     if !needs_relocation(code) {
         return false;
-    }
-    let hi = (code >> 8) as u8;
-    if hi == 0x9a {
-        return true;
     }
     let lo = (code & 0x00ff) as u8;
     if is_reloc_section(lo) {
@@ -2205,13 +2201,10 @@ mod tests {
         let layout = plan_layout(&[sum.clone()]);
         let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
         let reloc_size = u32::from_be_bytes([image[24], image[25], image[26], image[27]]) as usize;
-        assert_eq!(reloc_size, 6);
+        assert_eq!(reloc_size, 4);
         // relocation table begins after header + text + data
         let reloc_pos = 64 + 14;
-        assert_eq!(
-            &image[reloc_pos..reloc_pos + 6],
-            &[0x00, 0x00, 0x00, 0x06, 0x00, 0x0a]
-        );
+        assert_eq!(&image[reloc_pos..reloc_pos + 4], &[0x00, 0x00, 0x00, 0x06]);
     }
 
     #[test]
