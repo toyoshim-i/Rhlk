@@ -694,6 +694,25 @@ mod tests {
     }
 
     #[test]
+    fn prefers_first_member_for_duplicate_definition() {
+        let main_bytes = obj_with_xref_and_request("foo", "libx.a");
+        let main = parse_object(&main_bytes).expect("main parse");
+        let main_sum = resolve_object(&main);
+
+        let foo1_obj = parse_object(&obj_with_def("foo")).expect("foo1 parse");
+        let foo1_sum = resolve_object(&foo1_obj);
+        let foo2_obj = parse_object(&obj_with_def("foo")).expect("foo2 parse");
+        let foo2_sum = resolve_object(&foo2_obj);
+
+        let members = vec![
+            ("foo1.o".to_string(), foo1_obj, foo1_sum),
+            ("foo2.o".to_string(), foo2_obj, foo2_sum),
+        ];
+        let picked = select_archive_members(&[main_sum], &members);
+        assert_eq!(picked, vec![0]);
+    }
+
+    #[test]
     fn reports_unresolved_symbols_after_expansion() {
         let main = parse_object(&obj_with_xref_and_request("foo", "libx.a")).expect("main parse");
         let main_sum = resolve_object(&main);
