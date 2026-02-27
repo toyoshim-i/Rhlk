@@ -19,32 +19,37 @@ enum WriterError {
     RelocationTargetAddressIsOdd { offset: u32 },
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct OutputOptions {
+    pub r_format: bool,
+    pub r_no_check: bool,
+    pub omit_bss: bool,
+    pub make_mcs: bool,
+    pub cut_symbols: bool,
+    pub base_address: u32,
+    pub load_mode: u8,
+    pub section_info: bool,
+    pub g2lk_mode: bool,
+}
+
 pub fn write_output(
     output_path: &str,
-    r_format: bool,
-    r_no_check: bool,
-    omit_bss: bool,
-    make_mcs: bool,
-    cut_symbols: bool,
-    base_address: u32,
-    load_mode: u8,
-    section_info: bool,
-    g2lk_mode: bool,
+    options: OutputOptions,
     objects: &[ObjectFile],
     input_paths: &[String],
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
 ) -> Result<()> {
-    validate_link_inputs(objects, input_paths, summaries, g2lk_mode)?;
+    validate_link_inputs(objects, input_paths, summaries, options.g2lk_mode)?;
 
-    if r_format && !r_no_check {
+    if options.r_format && !options.r_no_check {
         validate_r_convertibility(objects, summaries, layout, output_path)?;
     }
 
-    let mut payload = if r_format {
-        build_r_payload(objects, summaries, layout, omit_bss)?
+    let mut payload = if options.r_format {
+        build_r_payload(objects, summaries, layout, options.omit_bss)?
     } else {
-        build_x_image_with_options(objects, summaries, layout, !cut_symbols).map_err(|err| {
+        build_x_image_with_options(objects, summaries, layout, !options.cut_symbols).map_err(|err| {
             if err
                 .downcast_ref::<WriterError>()
                 .is_some_and(|e| matches!(e, WriterError::RelocationTargetAddressIsOdd { .. }))
@@ -59,15 +64,15 @@ pub fn write_output(
         })?
     };
 
-    if !r_format && (base_address != 0 || load_mode != 0) {
-        apply_x_header_options(&mut payload, base_address, load_mode)?;
+    if !options.r_format && (options.base_address != 0 || options.load_mode != 0) {
+        apply_x_header_options(&mut payload, options.base_address, options.load_mode)?;
     }
-    if section_info {
-        patch_section_size_info(&mut payload, r_format, summaries, layout)?;
+    if options.section_info {
+        patch_section_size_info(&mut payload, options.r_format, summaries, layout)?;
     }
 
-    if make_mcs {
-        let bss_extra = if omit_bss {
+    if options.make_mcs {
+        let bss_extra = if options.omit_bss {
             0
         } else {
             layout

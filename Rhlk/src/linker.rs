@@ -4,38 +4,65 @@ use crate::format::obj::{Command, ObjectFile, parse_object};
 use crate::layout::plan_layout;
 use crate::resolver::resolve_object;
 use crate::resolver::ObjectSummary;
-use crate::writer::{write_map, write_output};
+use crate::writer::{OutputOptions, write_map, write_output};
 use std::env;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 pub fn run(args: Args) -> anyhow::Result<()> {
-    if args.title {
-        println!("rhlk {}", env!("CARGO_PKG_VERSION"));
-    }
+    validate_args(&args)?;
+    print_title_if_needed(&args);
+    let g2lk_mode = resolve_g2lk_mode(&args);
+    let expanded_inputs = expand_inputs(&args)?;
+    let prepared = prepare_objects(args, expanded_inputs, g2lk_mode)?;
+    emit_outputs(prepared)
+}
+
+struct PreparedLink {
+    args: Args,
+    g2lk_mode: bool,
+    expanded_inputs: Vec<String>,
+    objects: Vec<ObjectFile>,
+    summaries: Vec<ObjectSummary>,
+    input_names: Vec<String>,
+}
+
+fn validate_args(args: &Args) -> anyhow::Result<()> {
     if let Some(align) = args.align {
         if !(2..=256).contains(&align) || !align.is_power_of_two() {
             anyhow::bail!("align size must be power of two in [2, 256]: {align}");
         }
     }
+    Ok(())
+}
 
-    let g2lk_mode = if args.g2lk_off {
-        false
-    } else if args.g2lk_on {
-        true
-    } else {
-        true
-    };
+fn print_title_if_needed(args: &Args) {
+    if args.title {
+        println!("rhlk {}", env!("CARGO_PKG_VERSION"));
+    }
+}
 
+fn resolve_g2lk_mode(args: &Args) -> bool {
+    !args.g2lk_off
+}
+
+fn expand_inputs(args: &Args) -> anyhow::Result<Vec<String>> {
     let mut expanded_inputs = args.inputs.clone();
     for indirect in &args.indirect_files {
         expanded_inputs.extend(load_indirect_inputs(indirect)?);
     }
-    expanded_inputs.extend(resolve_lib_inputs(&args)?);
+    expanded_inputs.extend(resolve_lib_inputs(args)?);
     if expanded_inputs.is_empty() {
         anyhow::bail!("no input files")
     }
+    Ok(expanded_inputs)
+}
 
+fn prepare_objects(
+    args: Args,
+    expanded_inputs: Vec<String>,
+    g2lk_mode: bool,
+) -> anyhow::Result<PreparedLink> {
     let (objects, summaries, input_names) = load_objects_with_requests(&expanded_inputs, args.verbose)?;
     let mut objects = objects;
     let mut summaries = summaries;
@@ -55,22 +82,28 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         }
     }
     validate_unresolved_symbols(&summaries, &input_names)?;
+    validate_start_address_uniqueness(&summaries, &input_names)?;
 
-    let mut start_seen = false;
-    for (idx, summary) in summaries.iter().enumerate() {
-        if summary.start_address.is_none() {
-            continue;
-        }
-        if start_seen {
-            let name = Path::new(&input_names[idx])
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or(&input_names[idx]);
-            anyhow::bail!("複数の実行開始アドレスを指定することはできません in {name}");
-        }
-        start_seen = true;
-    }
+    Ok(PreparedLink {
+        args,
+        g2lk_mode,
+        expanded_inputs,
+        objects,
+        summaries,
+        input_names,
+    })
+}
 
+fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
+    let PreparedLink {
+        args,
+        g2lk_mode,
+        expanded_inputs,
+        objects,
+        mut summaries,
+        input_names,
+    } = prepared;
+    let args = &args;
     let layout = plan_layout(&summaries);
     if args.section_info {
         update_section_info_rsize(&mut summaries, &layout);
@@ -86,19 +119,21 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         );
     }
 
-    let effective_r = args.r_format || args.make_mcs;
-    let output = resolve_output_path(&args, &expanded_inputs);
+    let output = resolve_output_path(args, &expanded_inputs);
+    let options = OutputOptions {
+        r_format: args.r_format || args.make_mcs,
+        r_no_check: args.r_no_check,
+        omit_bss: args.omit_bss,
+        make_mcs: args.make_mcs,
+        cut_symbols: args.cut_symbols,
+        base_address: args.base_address.unwrap_or(0),
+        load_mode: args.load_mode.unwrap_or(0),
+        section_info: args.section_info,
+        g2lk_mode,
+    };
     write_output(
         &output,
-        effective_r,
-        args.r_no_check,
-        args.omit_bss,
-        args.make_mcs,
-        args.cut_symbols,
-        args.base_address.unwrap_or(0),
-        args.load_mode.unwrap_or(0),
-        args.section_info,
-        g2lk_mode,
+        options,
         &objects,
         &input_names,
         &summaries,
@@ -116,6 +151,27 @@ pub fn run(args: Args) -> anyhow::Result<()> {
 
     if args.verbose {
         println!("rhlk: parsed {} input file(s)", input_names.len());
+    }
+    Ok(())
+}
+
+fn validate_start_address_uniqueness(
+    summaries: &[ObjectSummary],
+    input_names: &[String],
+) -> anyhow::Result<()> {
+    let mut start_seen = false;
+    for (idx, summary) in summaries.iter().enumerate() {
+        if summary.start_address.is_none() {
+            continue;
+        }
+        if start_seen {
+            let name = Path::new(&input_names[idx])
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&input_names[idx]);
+            anyhow::bail!("複数の実行開始アドレスを指定することはできません in {name}");
+        }
+        start_seen = true;
     }
     Ok(())
 }

@@ -137,7 +137,14 @@
 - P0-2: 完了（第一段）
   - `writer/map.rs` へ map 出力責務を分離。
   - `writer/ctor_dtor.rs` へ ctor/dtor テーブル処理を分離。
-- P0-3: 未着手（次コミットで実施）
+- P0-3: 完了
+  - `writer::OutputOptions` を導入し `write_output` の多引数を解消。
+  - `linker::run` を段階関数へ分割:
+    - `validate_args`
+    - `expand_inputs`
+    - `prepare_objects`
+    - `emit_outputs`
+    - `validate_start_address_uniqueness`
 
 検証:
 - `cargo test -q --manifest-path Rhlk/Cargo.toml`: pass
