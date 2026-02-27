@@ -2,36 +2,17 @@ use crate::cli::Args;
 use crate::format::obj::parse_object;
 use crate::layout::plan_layout;
 use crate::resolver::resolve_object;
+use crate::resolver::ObjectSummary;
 use crate::writer::write_output;
-use std::path::Path;
+use std::collections::{HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 
 pub fn run(args: Args) -> anyhow::Result<()> {
     if args.inputs.is_empty() {
         anyhow::bail!("no input files")
     }
 
-    let mut objects = Vec::new();
-    let mut summaries = Vec::new();
-    for input in &args.inputs {
-        let bytes = std::fs::read(input)?;
-        let object = parse_object(&bytes)?;
-        let command_count = object.commands.len();
-        let summary = resolve_object(&object);
-        objects.push(object);
-        summaries.push(summary.clone());
-        if args.verbose {
-            println!("parsed {input}: {command_count} commands");
-            println!(
-                "  align={} sections: declared={} observed={} symbols={} xrefs={} requests={}",
-                summary.object_align,
-                summary.declared_section_sizes.len(),
-                summary.observed_section_usage.len(),
-                summary.symbols.len(),
-                summary.xrefs.len(),
-                summary.requests.len()
-            );
-        }
-    }
+    let (objects, summaries, input_names) = load_objects_with_requests(&args.inputs, args.verbose)?;
 
     let mut start_seen = false;
     for (idx, summary) in summaries.iter().enumerate() {
@@ -39,10 +20,10 @@ pub fn run(args: Args) -> anyhow::Result<()> {
             continue;
         }
         if start_seen {
-            let name = Path::new(&args.inputs[idx])
+            let name = Path::new(&input_names[idx])
                 .file_name()
                 .and_then(|s| s.to_str())
-                .unwrap_or(&args.inputs[idx]);
+                .unwrap_or(&input_names[idx]);
             anyhow::bail!("複数の実行開始アドレスを指定することはできません in {name}");
         }
         start_seen = true;
@@ -69,7 +50,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
             args.omit_bss,
             args.make_mcs,
             &objects,
-            &args.inputs,
+            &input_names,
             &summaries,
             &layout,
         )?;
@@ -79,7 +60,127 @@ pub fn run(args: Args) -> anyhow::Result<()> {
     }
 
     if args.verbose {
-        println!("rhlk: parsed {} input file(s)", args.inputs.len());
+        println!("rhlk: parsed {} input file(s)", input_names.len());
     }
     Ok(())
+}
+
+fn load_objects_with_requests(
+    initial_inputs: &[String],
+    verbose: bool,
+) -> anyhow::Result<(Vec<crate::format::obj::ObjectFile>, Vec<ObjectSummary>, Vec<String>)> {
+    let mut objects = Vec::new();
+    let mut summaries = Vec::new();
+    let mut input_names = Vec::new();
+    let mut pending = VecDeque::<PathBuf>::new();
+    let mut loaded = HashSet::<PathBuf>::new();
+
+    for input in initial_inputs {
+        pending.push_back(PathBuf::from(input));
+    }
+
+    while let Some(path) = pending.pop_front() {
+        let abs = absolutize_path(&path)?;
+        if !loaded.insert(abs.clone()) {
+            continue;
+        }
+        let bytes = std::fs::read(&abs).map_err(|_| {
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or_else(|| path.to_str().unwrap_or("<non-utf8>"));
+            anyhow::anyhow!("ファイルがありません: {name}")
+        })?;
+        let object = parse_object(&bytes)?;
+        let command_count = object.commands.len();
+        let summary = resolve_object(&object);
+
+        if verbose {
+            let label = path.to_string_lossy();
+            println!("parsed {label}: {command_count} commands");
+            println!(
+                "  align={} sections: declared={} observed={} symbols={} xrefs={} requests={}",
+                summary.object_align,
+                summary.declared_section_sizes.len(),
+                summary.observed_section_usage.len(),
+                summary.symbols.len(),
+                summary.xrefs.len(),
+                summary.requests.len()
+            );
+        }
+
+        let base_dir = abs.parent().unwrap_or(Path::new("."));
+        for req in &summary.requests {
+            let req_name = String::from_utf8_lossy(req).to_string();
+            let req_path = resolve_requested_path(base_dir, &req_name).ok_or_else(|| {
+                anyhow::anyhow!("ファイルがありません: {}", req_name)
+            })?;
+            pending.push_back(req_path);
+        }
+
+        objects.push(object);
+        summaries.push(summary);
+        input_names.push(path.to_string_lossy().to_string());
+    }
+
+    Ok((objects, summaries, input_names))
+}
+
+fn resolve_requested_path(base_dir: &Path, req_name: &str) -> Option<PathBuf> {
+    let req = Path::new(req_name);
+    if req.is_absolute() {
+        return req.exists().then(|| req.to_path_buf());
+    }
+    let c1 = base_dir.join(req);
+    if c1.exists() {
+        return Some(c1);
+    }
+    let c2 = PathBuf::from(req);
+    if c2.exists() {
+        return Some(c2);
+    }
+    None
+}
+
+fn absolutize_path(path: &Path) -> anyhow::Result<PathBuf> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    let cwd = std::env::current_dir()?;
+    Ok(cwd.join(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::load_objects_with_requests;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn loads_requested_object_from_same_directory() {
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rhlk-linker-test-{uniq}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+
+        let main = dir.join("main.o");
+        let sub = dir.join("sub.o");
+
+        // e001 "sub.o", 0000(end)
+        fs::write(&main, [0xe0, 0x01, b's', b'u', b'b', b'.', b'o', 0x00, 0x00, 0x00]).expect("write main");
+        // 0000(end)
+        fs::write(&sub, [0x00, 0x00]).expect("write sub");
+
+        let inputs = vec![main.to_string_lossy().to_string()];
+        let (_, _, names) = load_objects_with_requests(&inputs, false).expect("load");
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0], main.to_string_lossy());
+        assert!(names.iter().any(|v| v.ends_with("sub.o")));
+
+        let _ = fs::remove_file(main);
+        let _ = fs::remove_file(sub);
+        let _ = fs::remove_dir(dir);
+    }
 }
