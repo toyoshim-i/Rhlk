@@ -12,6 +12,12 @@ pub struct Args {
     #[arg(long = "rn")]
     pub r_no_check: bool,
 
+    #[arg(short = 'a')]
+    pub no_x_ext: bool,
+
+    #[arg(long = "an")]
+    pub opt_an: bool,
+
     #[arg(long = "makemcs")]
     pub make_mcs: bool,
 

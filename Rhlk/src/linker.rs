@@ -44,24 +44,23 @@ pub fn run(args: Args) -> anyhow::Result<()> {
     }
 
     let effective_r = args.r_format || args.make_mcs;
-    if let Some(output) = &args.output {
-        write_output(
-            output,
-            effective_r,
-            args.r_no_check,
-            args.omit_bss,
-            args.make_mcs,
-            args.cut_symbols,
-            &objects,
-            &input_names,
-            &summaries,
-            &layout,
-        )?;
-        if args.verbose {
-            println!("wrote output: {output}");
-        }
+    let output = resolve_output_path(&args, &args.inputs);
+    write_output(
+        &output,
+        effective_r,
+        args.r_no_check,
+        args.omit_bss,
+        args.make_mcs,
+        args.cut_symbols,
+        &objects,
+        &input_names,
+        &summaries,
+        &layout,
+    )?;
+    if args.verbose {
+        println!("wrote output: {output}");
     }
-    if let Some(map_output) = resolve_map_output(&args.map, &args.output, &args.inputs) {
+    if let Some(map_output) = resolve_map_output(&args.map, &Some(output.clone()), &args.inputs) {
         write_map(&map_output, &summaries, &layout, &input_names)?;
         if args.verbose {
             println!("wrote map: {map_output}");
@@ -72,6 +71,50 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         println!("rhlk: parsed {} input file(s)", input_names.len());
     }
     Ok(())
+}
+
+fn resolve_output_path(args: &Args, inputs: &[String]) -> String {
+    let explicit = args.output.is_some();
+    let base = if let Some(out) = args.output.clone() {
+        out
+    } else if let Some(first) = inputs.first() {
+        let p = PathBuf::from(first);
+        if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+            if let Some(parent) = p.parent() {
+                if !parent.as_os_str().is_empty() {
+                    parent.join(stem).to_string_lossy().to_string()
+                } else {
+                    stem.to_string()
+                }
+            } else {
+                stem.to_string()
+            }
+        } else {
+            first.clone()
+        }
+    } else {
+        "a".to_string()
+    };
+    let p = PathBuf::from(&base);
+    if p.extension().is_some() {
+        return base;
+    }
+    if args.make_mcs {
+        return format!("{base}.mcs");
+    }
+    if args.r_format {
+        return format!("{base}.r");
+    }
+    let add_x = if args.opt_an {
+        !explicit
+    } else {
+        !args.no_x_ext
+    };
+    if add_x {
+        format!("{base}.x")
+    } else {
+        base
+    }
 }
 
 fn resolve_map_output(
@@ -462,7 +505,7 @@ fn resolve_gnu_long_name(table: Option<&[u8]>, offset: usize) -> Option<String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        is_ar_archive, load_objects_with_requests, parse_ar_members, resolve_map_output, run,
+        is_ar_archive, load_objects_with_requests, parse_ar_members, resolve_map_output, resolve_output_path, run,
         select_archive_members, validate_unresolved_symbols,
     };
     use crate::cli::Args;
@@ -923,6 +966,39 @@ mod tests {
     }
 
     #[test]
+    fn resolves_output_path_name() {
+        let mut args = Args {
+            output: None,
+            r_format: false,
+            r_no_check: false,
+            no_x_ext: false,
+            opt_an: false,
+            make_mcs: false,
+            omit_bss: false,
+            cut_symbols: false,
+            map: None,
+            verbose: false,
+            inputs: vec!["foo.o".to_string()],
+        };
+        assert_eq!(resolve_output_path(&args, &args.inputs), "foo.x");
+
+        args.no_x_ext = true;
+        assert_eq!(resolve_output_path(&args, &args.inputs), "foo");
+
+        args.opt_an = true;
+        assert_eq!(resolve_output_path(&args, &args.inputs), "foo.x");
+
+        args.output = Some("bar".to_string());
+        assert_eq!(resolve_output_path(&args, &args.inputs), "bar");
+
+        args.r_format = true;
+        assert_eq!(resolve_output_path(&args, &args.inputs), "bar.r");
+
+        args.make_mcs = true;
+        assert_eq!(resolve_output_path(&args, &args.inputs), "bar.mcs");
+    }
+
+    #[test]
     fn run_writes_map_with_default_name() {
         let uniq = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -937,6 +1013,8 @@ mod tests {
             output: None,
             r_format: false,
             r_no_check: false,
+            no_x_ext: false,
+            opt_an: false,
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
@@ -968,6 +1046,8 @@ mod tests {
             output: None,
             r_format: false,
             r_no_check: false,
+            no_x_ext: false,
+            opt_an: false,
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
