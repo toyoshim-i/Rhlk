@@ -1,5 +1,8 @@
 # Rust 移植計画 (初版)
 
+> Status: Initial draft (historical)。  
+> 進捗と完了状態は `2026-02-27-remaining-roadmap.md` を参照。
+
 ## ゴール
 HLKX 相当機能を、ホスト OS ネイティブ実行可能な Rust 実装として段階移植する。
 

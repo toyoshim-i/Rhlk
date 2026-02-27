@@ -1,5 +1,9 @@
 # 回帰ハーネス初回実行結果 (2026-02-27)
 
+> Status: Historical snapshot (初回実行時点の記録)。  
+> 最新の一致状況は `2026-02-27-final-executable-compare.md` と
+> `2026-02-27-regression-harness.md` を参照。
+
 実行コマンド:
 
 ```bash

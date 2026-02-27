@@ -1,5 +1,9 @@
 # HLK エラーメッセージカバレッジ監査 (2026-02-27)
 
+> Status: Historical snapshot。  
+> 本文のカバレッジ数値は当時の集計値。最新の最終評価は
+> `2026-02-27-final-executable-compare.md` を参照。
+
 対象:
 - `external/hlkx/src/make_exe.s` の主要エラーメッセージ
 - `tools/run_hlkx_regression.sh` 実行結果 (`artifacts/hlkx-regression/orig/*.msg.norm`)

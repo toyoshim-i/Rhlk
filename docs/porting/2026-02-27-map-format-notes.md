@@ -1,5 +1,8 @@
 # HLK `-p` / `make_map` 調査メモ (2026-02-27)
 
+> Status: Research notes。  
+> map 比較の運用ポリシーは `2026-02-27-map-path-policy.md` を正とする。
+
 ## 対象
 - `external/hlkx/src/main.s`
   - `ana_opt_b350` (`-p[file]`)
