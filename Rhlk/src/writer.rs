@@ -1163,7 +1163,7 @@ fn collect_object_relocations(
     global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
     out: &mut Vec<u32>,
 ) {
-    walk_opaque_commands(object, |cmd, current, local, _calc_stack| {
+    walk_commands(object, |cmd, current, local, _calc_stack| {
         let Command::Opaque { code, payload } = cmd else {
             return;
         };
@@ -1212,7 +1212,7 @@ struct ExprEntry {
     value: i32,
 }
 
-fn walk_opaque_commands<F>(obj: &ObjectFile, mut on_opaque: F)
+fn walk_commands<F>(obj: &ObjectFile, mut on_command: F)
 where
     F: FnMut(&Command, SectionKind, u32, &mut Vec<ExprEntry>),
 {
@@ -1220,6 +1220,8 @@ where
     let mut cursor_by_section = BTreeMap::<SectionKind, u32>::new();
     let mut calc_stack = Vec::<ExprEntry>::new();
     for cmd in &obj.commands {
+        let local = cursor_by_section.get(&current).copied().unwrap_or(0);
+        on_command(cmd, current, local, &mut calc_stack);
         match cmd {
             Command::ChangeSection { section } => {
                 current = SectionKind::from_u8(*section);
@@ -1235,8 +1237,6 @@ where
                 bump_cursor(&mut cursor_by_section, current, *size);
             }
             Command::Opaque { code, .. } => {
-                let local = cursor_by_section.get(&current).copied().unwrap_or(0);
-                on_opaque(cmd, current, local, &mut calc_stack);
                 bump_cursor(
                     &mut cursor_by_section,
                     current,
@@ -1305,7 +1305,7 @@ fn patch_opaque_commands(
     global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
 ) {
     for (idx, (obj, summary)) in objects.iter().zip(summaries.iter()).enumerate() {
-        walk_opaque_commands(obj, |cmd, current, local, calc_stack| {
+        walk_commands(obj, |cmd, current, local, calc_stack| {
             let Command::Opaque { code, payload } = cmd else {
                 return;
             };
@@ -1675,46 +1675,42 @@ fn validate_unsupported_expression_commands(
         let mut dtor_count = 0usize;
         let mut ctor_header_size = None::<u32>;
         let mut dtor_header_size = None::<u32>;
-        for cmd in &obj.commands {
-            if let Command::Header { section, size, .. } = cmd {
-                match *section {
-                    0x0c => ctor_header_size = Some(*size),
-                    0x0d => dtor_header_size = Some(*size),
+        walk_commands(obj, |cmd, current, local, calc_stack| match cmd {
+            Command::Header { section, size, .. } => match *section {
+                0x0c => ctor_header_size = Some(*size),
+                0x0d => dtor_header_size = Some(*size),
+                _ => {}
+            },
+            Command::Opaque { code, .. } => {
+                match *code {
+                    opcode::OP_CTOR_ENTRY => {
+                        has_ctor = true;
+                        ctor_count += 1;
+                    }
+                    opcode::OP_DTOR_ENTRY => {
+                        has_dtor = true;
+                        dtor_count += 1;
+                    }
+                    opcode::OP_DOCTOR => has_doctor = true,
+                    opcode::OP_DODTOR => has_dodtor = true,
                     _ => {}
                 }
-            }
-        }
-        walk_opaque_commands(obj, |cmd, current, local, calc_stack| {
-            let Command::Opaque { code, .. } = cmd else {
-                return;
-            };
-            match *code {
-                opcode::OP_CTOR_ENTRY => {
-                    has_ctor = true;
-                    ctor_count += 1;
+                let messages = expr::classify_expression_errors(
+                    *code,
+                    cmd,
+                    summary,
+                    &global_symbols,
+                    current,
+                    calc_stack,
+                );
+                for msg in messages {
+                    diagnostics.push(format!(
+                        "{msg} in {obj_name}\n at {local:08x} ({})",
+                        section_name(current)
+                    ));
                 }
-                opcode::OP_DTOR_ENTRY => {
-                    has_dtor = true;
-                    dtor_count += 1;
-                }
-                opcode::OP_DOCTOR => has_doctor = true,
-                opcode::OP_DODTOR => has_dodtor = true,
-                _ => {}
             }
-            let messages = expr::classify_expression_errors(
-                *code,
-                cmd,
-                summary,
-                &global_symbols,
-                current,
-                calc_stack,
-            );
-            for msg in messages {
-                diagnostics.push(format!(
-                    "{msg} in {obj_name}\n at {local:08x} ({})",
-                    section_name(current)
-                ));
-            }
+            _ => {}
         });
         if g2lk_mode {
             if has_ctor && !has_doctor {
