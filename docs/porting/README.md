@@ -11,6 +11,8 @@
   - map ヘッダパスの最終比較ポリシー。
 - `2026-02-27-test-guide.md`
   - テスト種別、環境構築、実行手順の総合ガイド。
+- `2026-02-27-rust-idiomatic-refactor-priority.md`
+  - Rustらしさ監査とリファクタリング優先度。
 
 ## 仕様・実装監査（参照用）
 - `2026-02-27-command-coverage.md`
