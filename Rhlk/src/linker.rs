@@ -603,9 +603,14 @@ fn load_objects_with_requests_paths(
                     parsed_members.push((member_name, object, summary));
                 }
                 let select_indices = select_archive_members(&summaries, &parsed_members);
-                let selected = select_indices.into_iter().collect::<HashSet<_>>();
+                let mut selected = vec![false; parsed_members.len()];
+                for idx in select_indices {
+                    if let Some(slot) = selected.get_mut(idx) {
+                        *slot = true;
+                    }
+                }
                 for (idx, (member_name, object, summary)) in parsed_members.into_iter().enumerate() {
-                    if !selected.contains(&idx) {
+                    if !selected.get(idx).copied().unwrap_or(false) {
                         continue;
                     }
                     let label = format!("{}({})", path.to_string_lossy(), member_name);

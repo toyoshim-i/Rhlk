@@ -212,6 +212,8 @@
   - `resolve_lib_inputs` の戻り値を `Vec<PathBuf>` に変更し、`expand_inputs` 側で最終段だけ文字列化する構成へ整理。
   - `load_objects_with_requests` 実装本体を `load_objects_with_requests_paths(&[PathBuf], ...)` として分離し、内部処理を `PathBuf` ベースへ移行。
   - `PreparedLink.expanded_inputs` / `expand_inputs` を `Vec<PathBuf>` 化し、`resolve_output_path` / `resolve_map_output` も `PathBuf` 入力へ統一。
+- P1-1: 着手（第一段）
+  - archive member 選択結果の適用を `HashSet<usize>` から `Vec<bool>` マスクへ変更し、中間集合構築と `contains` 探索コストを削減。
 
 検証:
 - `cargo test -q --manifest-path Rhlk/Cargo.toml`: pass
