@@ -127,50 +127,24 @@ pub fn parse_object(input: &[u8]) -> Result<ObjectFile, FormatError> {
 }
 
 fn is_supported_opaque(code: u16) -> bool {
-    let hi = (code >> 8) as u8;
-    let lo = code as u8;
+    let [hi, lo] = code.to_be_bytes();
     match hi {
-        0x40 | 0x41 | 0x42 | 0x43 | 0x45 | 0x46 | 0x47 => true,
         0x4c | 0x4d => lo == 0x01,
-        0x50 | 0x51 | 0x52 | 0x53 | 0x55 | 0x56 | 0x57 => true,
-        0x65 | 0x69 | 0x6a | 0x6b => true,
-        0x80 => true,
         0x90 | 0x91 | 0x92 | 0x93 | 0x96 | 0x99 | 0x9a => lo == 0x00,
-        0xa0 => true,
+        0x40 | 0x41 | 0x42 | 0x43 | 0x45 | 0x46 | 0x47 | 0x50 | 0x51 | 0x52 | 0x53 | 0x55
+        | 0x56 | 0x57 | 0x65 | 0x69 | 0x6a | 0x6b | 0x80 | 0xa0 => true,
         _ => false,
     }
 }
 
 fn read_opaque_payload(reader: &mut Reader<'_>, code: u16) -> Result<Vec<u8>, FormatError> {
-    let hi = (code >> 8) as u8;
-    let lo = code as u8;
+    let [hi, lo] = code.to_be_bytes();
     let payload_len = match hi {
-        0x40 | 0x41 | 0x42 | 0x43 | 0x46 => {
-            if is_label_section(lo) {
-                2
-            } else {
-                4
-            }
-        }
+        0x40 | 0x41 | 0x42 | 0x43 | 0x46 | 0x80 => if is_label_section(lo) { 2 } else { 4 },
         0x45 | 0x47 => 2,
         0x4c | 0x4d => 4,
-        0x50 => 6,
-        0x51 | 0x52 | 0x53 | 0x56 => {
-            if is_label_section(lo) {
-                6
-            } else {
-                8
-            }
-        }
-        0x55 | 0x57 => 6,
-        0x65 | 0x69 | 0x6a | 0x6b => 6,
-        0x80 => {
-            if is_label_section(lo) {
-                2
-            } else {
-                4
-            }
-        }
+        0x50 | 0x55 | 0x57 | 0x65 | 0x69 | 0x6a | 0x6b => 6,
+        0x51 | 0x52 | 0x53 | 0x56 => if is_label_section(lo) { 6 } else { 8 },
         0x90 | 0x91 | 0x92 | 0x93 | 0x96 | 0x99 | 0x9a | 0xa0 => 0,
         _ => return Err(FormatError::UnsupportedCommand(code)),
     };
@@ -178,7 +152,7 @@ fn read_opaque_payload(reader: &mut Reader<'_>, code: u16) -> Result<Vec<u8>, Fo
 }
 
 fn is_label_section(section: u8) -> bool {
-    matches!(section, 0xfc | 0xfd | 0xfe | 0xff)
+    matches!(section, 0xfc..=0xff)
 }
 
 struct Reader<'a> {
@@ -229,7 +203,7 @@ impl<'a> Reader<'a> {
     }
 
     fn align_even(&mut self) {
-        if self.pos % 2 != 0 && self.pos < self.input.len() {
+        if !self.pos.is_multiple_of(2) && self.pos < self.input.len() {
             self.pos += 1;
         }
     }
