@@ -35,8 +35,7 @@
   - 追加: `a0_attr_neg`（text属性シンボルでのエラー系）
   - 追加: `a0_attr_add/a0_attr_sub`（text属性シンボル + 定数の二項演算）
   - 追加: `a0_attr_subsym/a0_attr_addsym`（text属性シンボル同士の `-` / `+`）
-- 未カバー:
-  - 非定数属性同士の `a0` 二項演算の残り演算子（`* / % & | ^ << >>`）のHLK同値比較
+  - 追加: `a0_attr_mulsym/divsym/modsym/andsym/orsym/xorsym/shlsym/shrsym`
 
 ### 90/91/92/93/96/99/9a stack write
 - 実装: あり（underflow診断は `90/91/92/93/96/99/9a`）

@@ -30,3 +30,11 @@ a0_attr_add	-	a0_attr_add_main.o a0_text_label.o	x
 a0_attr_sub	-	a0_attr_sub_main.o a0_text_label.o	x
 a0_attr_subsym	-	a0_asub.o a0_text_labels.o	x
 a0_attr_addsym	-	a0_aadd.o a0_text_labels.o	x
+a0_attr_mulsym	-	a0_amul.o a0_text_labels.o	x
+a0_attr_divsym	-	a0_adiv.o a0_text_labels.o	x
+a0_attr_modsym	-	a0_amod.o a0_text_labels.o	x
+a0_attr_andsym	-	a0_aand.o a0_text_labels.o	x
+a0_attr_orsym	-	a0_aor.o a0_text_labels.o	x
+a0_attr_xorsym	-	a0_axor.o a0_text_labels.o	x
+a0_attr_shlsym	-	a0_ashl.o a0_text_labels.o	x
+a0_attr_shrsym	-	a0_ashr.o a0_text_labels.o	x

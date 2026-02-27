@@ -160,6 +160,72 @@ ASM
   (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_aadd.o a0_aadd.s >/dev/null 2>/dev/null)
   cp "${tmp}/a0_aadd.o" "${OUT_DIR}/a0_aadd.o"
 
+  cat > "${tmp}/a0_amul.s" <<'ASM'
+.xref label1
+.xref label2
+.dc.l label1*label2
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_amul.o a0_amul.s >/dev/null 2>/dev/null)
+  cp "${tmp}/a0_amul.o" "${OUT_DIR}/a0_amul.o"
+
+  cat > "${tmp}/a0_adiv.s" <<'ASM'
+.xref label1
+.xref label2
+.dc.l label2/label1
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_adiv.o a0_adiv.s >/dev/null 2>/dev/null)
+  cp "${tmp}/a0_adiv.o" "${OUT_DIR}/a0_adiv.o"
+
+  cp "${tmp}/a0_adiv.o" "${OUT_DIR}/a0_amod.o"
+  perl -0777 -i -pe 's/\xA0\x0A/\xA0\x0B/' "${OUT_DIR}/a0_amod.o"
+
+  cat > "${tmp}/a0_aand.s" <<'ASM'
+.xref label1
+.xref label2
+.dc.l label1&label2
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_aand.o a0_aand.s >/dev/null 2>/dev/null)
+  cp "${tmp}/a0_aand.o" "${OUT_DIR}/a0_aand.o"
+
+  cat > "${tmp}/a0_aor.s" <<'ASM'
+.xref label1
+.xref label2
+.dc.l label1|label2
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_aor.o a0_aor.s >/dev/null 2>/dev/null)
+  cp "${tmp}/a0_aor.o" "${OUT_DIR}/a0_aor.o"
+
+  cat > "${tmp}/a0_axor.s" <<'ASM'
+.xref label1
+.xref label2
+.dc.l label1^label2
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_axor.o a0_axor.s >/dev/null 2>/dev/null)
+  cp "${tmp}/a0_axor.o" "${OUT_DIR}/a0_axor.o"
+
+  cat > "${tmp}/a0_ashl.s" <<'ASM'
+.xref label1
+.xref label2
+.dc.l label1<<label2
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_ashl.o a0_ashl.s >/dev/null 2>/dev/null)
+  cp "${tmp}/a0_ashl.o" "${OUT_DIR}/a0_ashl.o"
+
+  cat > "${tmp}/a0_ashr.s" <<'ASM'
+.xref label1
+.xref label2
+.dc.l label1>>label2
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_ashr.o a0_ashr.s >/dev/null 2>/dev/null)
+  cp "${tmp}/a0_ashr.o" "${OUT_DIR}/a0_ashr.o"
+
   cat > "${tmp}/stk91_main.s" <<'ASM'
 .xref label
 .dc.w .neg.label
