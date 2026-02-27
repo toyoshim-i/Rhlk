@@ -1635,6 +1635,11 @@ fn validate_unsupported_expression_commands(
         let mut calc_stack = Vec::<ExprEntry>::new();
         for cmd in &obj.commands {
             match cmd {
+                Command::Header { section, .. } if matches!(*section, 0x0c | 0x0d) => {
+                    diagnostics.push(format!(
+                        "ctor/dtor section header is not supported yet in {obj_name}"
+                    ));
+                }
                 Command::ChangeSection { section } => {
                     current = SectionKind::from_u8(*section);
                 }
@@ -2849,6 +2854,32 @@ mod tests {
             let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)])
                 .expect_err("must reject doctor/dodtor command");
             assert!(err.to_string().contains(".doctor/.dodtor は未対応です"));
+        }
+    }
+
+    #[test]
+    fn rejects_unimplemented_ctor_dtor_section_headers() {
+        for section in [0x0c, 0x0d] {
+            let obj = ObjectFile {
+                commands: vec![
+                    Command::Header {
+                        section,
+                        size: 4,
+                        name: if section == 0x0c {
+                            b"ctor".to_vec()
+                        } else {
+                            b"dtor".to_vec()
+                        },
+                    },
+                    Command::End,
+                ],
+                scd_tail: Vec::new(),
+            };
+            let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)])
+                .expect_err("must reject ctor/dtor section header");
+            assert!(err
+                .to_string()
+                .contains("ctor/dtor section header is not supported yet"));
         }
     }
 
