@@ -288,20 +288,10 @@ fn build_x_image_with_options(
     let text_size = linked
         .get(&SectionKind::Text)
         .map_or(0, |v| usize_to_u32_saturating(v.len()));
-    let mut data_size = linked
+    let data_size = linked
         .get(&SectionKind::Data)
         .map_or(0, |v| usize_to_u32_saturating(v.len()));
-    let g2lk_synth = compute_g2lk_synthetic_symbols(objects, g2lk_mode, text_size, data_size);
-    if let Some(synth) = g2lk_synth {
-        if synth.data_growth != 0 {
-            let data = linked.entry(SectionKind::Data).or_default();
-            data.resize(
-                usize::try_from(data_size.saturating_add(synth.data_growth)).unwrap_or(usize::MAX),
-                0,
-            );
-            data_size = data_size.saturating_add(synth.data_growth);
-        }
-    }
+    let (data_size, g2lk_synth) = extend_data_for_g2lk(&mut linked, objects, g2lk_mode, text_size, data_size);
     let bss_only = layout
         .total_size_by_section
         .get(&SectionKind::Bss)
@@ -321,9 +311,15 @@ fn build_x_image_with_options(
         .saturating_add(common_only)
         .saturating_add(stack_only);
 
-    let mut global_symbol_addrs =
-        build_global_symbol_addrs(summaries, layout, text_size, data_size, bss_only, common_only);
-    inject_g2lk_symbols(&mut global_symbol_addrs, g2lk_synth);
+    let global_symbol_addrs = build_global_symbol_addrs_with_g2lk(
+        summaries,
+        layout,
+        text_size,
+        data_size,
+        bss_only,
+        common_only,
+        g2lk_synth,
+    );
     patch_opaque_commands(
         &mut linked,
         objects,
@@ -871,20 +867,10 @@ fn build_r_payload(
     let text_size = linked
         .get(&SectionKind::Text)
         .map_or(0, |v| usize_to_u32_saturating(v.len()));
-    let mut data_size = linked
+    let data_size = linked
         .get(&SectionKind::Data)
         .map_or(0, |v| usize_to_u32_saturating(v.len()));
-    let g2lk_synth = compute_g2lk_synthetic_symbols(objects, g2lk_mode, text_size, data_size);
-    if let Some(synth) = g2lk_synth {
-        if synth.data_growth != 0 {
-            let data = linked.entry(SectionKind::Data).or_default();
-            data.resize(
-                usize::try_from(data_size.saturating_add(synth.data_growth)).unwrap_or(usize::MAX),
-                0,
-            );
-            data_size = data_size.saturating_add(synth.data_growth);
-        }
-    }
+    let (data_size, g2lk_synth) = extend_data_for_g2lk(&mut linked, objects, g2lk_mode, text_size, data_size);
     let bss_only = layout
         .total_size_by_section
         .get(&SectionKind::Bss)
@@ -895,9 +881,15 @@ fn build_r_payload(
         .get(&SectionKind::Common)
         .copied()
         .unwrap_or(0);
-    let mut global_symbol_addrs =
-        build_global_symbol_addrs(summaries, layout, text_size, data_size, bss_only, common_only);
-    inject_g2lk_symbols(&mut global_symbol_addrs, g2lk_synth);
+    let global_symbol_addrs = build_global_symbol_addrs_with_g2lk(
+        summaries,
+        layout,
+        text_size,
+        data_size,
+        bss_only,
+        common_only,
+        g2lk_synth,
+    );
     patch_opaque_commands(
         &mut linked,
         objects,
@@ -1116,10 +1108,16 @@ fn validate_r_convertibility(
         .get(&SectionKind::Common)
         .copied()
         .unwrap_or(0);
-    let mut global_symbol_addrs =
-        build_global_symbol_addrs(summaries, layout, text_size, data_size, bss_only, common_only);
     let g2lk_synth = compute_g2lk_synthetic_symbols(objects, g2lk_mode, text_size, data_size);
-    inject_g2lk_symbols(&mut global_symbol_addrs, g2lk_synth);
+    let global_symbol_addrs = build_global_symbol_addrs_with_g2lk(
+        summaries,
+        layout,
+        text_size,
+        data_size,
+        bss_only,
+        common_only,
+        g2lk_synth,
+    );
     let reloc = build_relocation_table(objects, summaries, layout, text_size, &global_symbol_addrs)?;
     if !reloc.is_empty() {
         bail!(
@@ -1236,6 +1234,41 @@ fn inject_g2lk_symbols(
             addr: synth.dtor_addr,
         },
     );
+}
+
+fn build_global_symbol_addrs_with_g2lk(
+    summaries: &[ObjectSummary],
+    layout: &LayoutPlan,
+    text_size: u32,
+    data_size: u32,
+    bss_only: u32,
+    common_only: u32,
+    g2lk_synth: Option<G2lkSyntheticSymbols>,
+) -> HashMap<Vec<u8>, GlobalSymbolAddr> {
+    let mut global_symbol_addrs =
+        build_global_symbol_addrs(summaries, layout, text_size, data_size, bss_only, common_only);
+    inject_g2lk_symbols(&mut global_symbol_addrs, g2lk_synth);
+    global_symbol_addrs
+}
+
+fn extend_data_for_g2lk(
+    linked: &mut BTreeMap<SectionKind, Vec<u8>>,
+    objects: &[ObjectFile],
+    g2lk_mode: bool,
+    text_size: u32,
+    data_size: u32,
+) -> (u32, Option<G2lkSyntheticSymbols>) {
+    let g2lk_synth = compute_g2lk_synthetic_symbols(objects, g2lk_mode, text_size, data_size);
+    let mut updated_data_size = data_size;
+    if let Some(synth) = g2lk_synth {
+        if synth.data_growth != 0 {
+            let data = linked.entry(SectionKind::Data).or_default();
+            let new_size = data_size.saturating_add(synth.data_growth);
+            data.resize(usize::try_from(new_size).unwrap_or(usize::MAX), 0);
+            updated_data_size = new_size;
+        }
+    }
+    (updated_data_size, g2lk_synth)
 }
 
 fn to_human68k_path(path: &Path) -> String {
