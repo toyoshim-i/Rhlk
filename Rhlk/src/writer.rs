@@ -2,10 +2,17 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
+use thiserror::Error;
 
 use crate::format::obj::{Command, ObjectFile};
 use crate::layout::LayoutPlan;
 use crate::resolver::{ObjectSummary, SectionKind, Symbol};
+
+#[derive(Debug, Error)]
+enum WriterError {
+    #[error("relocation target address is odd: {offset:#x}")]
+    RelocationTargetAddressIsOdd { offset: u32 },
+}
 
 pub fn write_output(
     output_path: &str,
@@ -33,8 +40,10 @@ pub fn write_output(
         build_r_payload(objects, summaries, layout, omit_bss)?
     } else {
         build_x_image_with_options(objects, summaries, layout, !cut_symbols).map_err(|err| {
-            let text = err.to_string();
-            if text.contains("relocation target address is odd") {
+            if err
+                .downcast_ref::<WriterError>()
+                .is_some_and(|e| matches!(e, WriterError::RelocationTargetAddressIsOdd { .. }))
+            {
                 anyhow::anyhow!(
                     "再配置対象が奇数アドレスにあります: {}",
                     to_human68k_path(output_path)
@@ -1141,7 +1150,7 @@ fn build_relocation_table(
         );
     }
     if let Some(odd) = offsets.iter().copied().find(|off| off & 1 != 0) {
-        bail!("relocation target address is odd: {odd:#x}");
+        bail!(WriterError::RelocationTargetAddressIsOdd { offset: odd });
     }
     offsets.sort_unstable();
     offsets.dedup();
