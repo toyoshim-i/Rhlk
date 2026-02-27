@@ -148,6 +148,8 @@ compare_case() {
   local rhlk_norm="${rhlk_prefix}.msg.norm"
   local orig_map_norm="${orig_prefix}.map.norm"
   local rhlk_map_norm="${rhlk_prefix}.map.norm"
+  local orig_map_raw="${orig_prefix}.map.rawcmp"
+  local rhlk_map_raw="${rhlk_prefix}.map.rawcmp"
   : >"${diff_file}"
 
   normalize_msg "${orig_prefix}.msg" "${orig_norm}" "orig"
@@ -185,6 +187,12 @@ compare_case() {
       echo "[${name}] map output existence differs" >>"${diff_file}"
       failed=1
     else
+      normalize_map_raw "${orig_map}" "${orig_map_raw}"
+      normalize_map_raw "${rhlk_map}" "${rhlk_map_raw}"
+      if ! diff -u "${orig_map_raw}" "${rhlk_map_raw}" >>"${diff_file}" 2>&1; then
+        echo "[${name}] map output differs (raw format, path-normalized)" >>"${diff_file}"
+        failed=1
+      fi
       normalize_map "${orig_map}" "${orig_map_norm}"
       normalize_map "${rhlk_map}" "${rhlk_map_norm}"
       if ! diff -u "${orig_map_norm}" "${rhlk_map_norm}" >>"${diff_file}" 2>&1; then
@@ -245,6 +253,21 @@ normalize_map() {
       print "$name\t$addr\t$sect\n";
     }
   ' "${input}" | LC_ALL=C sort -u >"${output}"
+}
+
+normalize_map_raw() {
+  local input="$1"
+  local output="$2"
+  # Compare full map formatting while ignoring only the executable path line.
+  # line2 is:
+  #   A:\...\<name>.x
+  perl -ne '
+    s/\r$//;
+    if ($. == 2) {
+      s#^A:.*[\\/]([^\\/]+\.x)$#A:<PATH>\\$1#i;
+    }
+    print "$_\n";
+  ' "${input}" >"${output}"
 }
 
 main() {
