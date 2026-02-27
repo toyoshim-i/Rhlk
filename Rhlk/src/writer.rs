@@ -1163,47 +1163,26 @@ fn collect_object_relocations(
     global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
     out: &mut Vec<u32>,
 ) {
-    let mut current = SectionKind::Text;
-    let mut cursor_by_section = BTreeMap::<SectionKind, u32>::new();
-
-    for cmd in &object.commands {
-        match cmd {
-            Command::ChangeSection { section } => {
-                current = SectionKind::from_u8(*section);
-            }
-            Command::RawData(bytes) => {
-                bump_cursor(
-                    &mut cursor_by_section,
-                    current,
-                    usize_to_u32_saturating(bytes.len()),
-                );
-            }
-            Command::DefineSpace { size } => {
-                bump_cursor(&mut cursor_by_section, current, *size);
-            }
-            Command::Opaque { code, payload } => {
-                let write_size = opaque_write_size(*code);
-                if write_size == 0 {
-                    continue;
-                }
-
-                if matches!(current, SectionKind::Text | SectionKind::Data)
-                    && should_relocate(*code, payload, summary, global_symbol_addrs)
-                {
-                    let local = cursor_by_section.get(&current).copied().unwrap_or(0);
-                    let section_base = match current {
-                        SectionKind::Data => total_text_size,
-                        _ => 0,
-                    };
-                    let placed = placement.get(&current).copied().unwrap_or(0);
-                    out.push(section_base.saturating_add(placed).saturating_add(local));
-                }
-
-                bump_cursor(&mut cursor_by_section, current, u32::from(write_size));
-            }
-            _ => {}
+    walk_opaque_commands(object, |cmd, current, local, _calc_stack| {
+        let Command::Opaque { code, payload } = cmd else {
+            return;
+        };
+        if opaque_write_size(*code) == 0 {
+            return;
         }
-    }
+        if !matches!(current, SectionKind::Text | SectionKind::Data) {
+            return;
+        }
+        if !should_relocate(*code, payload, summary, global_symbol_addrs) {
+            return;
+        }
+        let section_base = match current {
+            SectionKind::Data => total_text_size,
+            _ => 0,
+        };
+        let placed = placement.get(&current).copied().unwrap_or(0);
+        out.push(section_base.saturating_add(placed).saturating_add(local));
+    });
 }
 
 fn opaque_write_size(code: u16) -> u8 {
