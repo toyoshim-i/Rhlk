@@ -196,6 +196,7 @@ pub fn write_map(
         common_only,
         input_paths,
     );
+    let text = text.replace('\n', "\r\n");
     std::fs::write(output_path, text).with_context(|| format!("failed to write {output_path}"))?;
     Ok(())
 }
@@ -219,7 +220,7 @@ fn build_map_text(
         .unwrap_or(0);
     let mut out = String::new();
     out.push_str("==========================================================\n");
-    out.push_str(exec_output_path);
+    out.push_str(&to_human68k_path(exec_output_path));
     out.push('\n');
     out.push_str("==========================================================\n");
     out.push_str(&format_exec_line(exec));
@@ -334,30 +335,45 @@ fn display_obj_name(path: Option<&String>, idx: usize) -> String {
 }
 
 fn format_symbol_line(name: &str, addr: u32, sect: &str) -> String {
-    format!("{name:<24} : {addr:08X} ({sect:<7})\n")
+    let mut out = format_label_prefix(name);
+    out.push_str(&format!("{addr:08x} ({sect:<7})\n"));
+    out
 }
 
 fn format_exec_line(exec: u32) -> String {
-    format!("{:<24} : {exec:08X}\n", "exec")
+    let mut out = format_label_prefix("exec");
+    out.push_str(&format!("{exec:08x}\n"));
+    out
 }
 
 fn format_align_line(align: u32) -> String {
-    format!("{:<24} : {align:08X}\n", "align")
+    let mut out = format_label_prefix("align");
+    out.push_str(&format!("{align:08x}\n"));
+    out
 }
 
 fn format_section_line(name: &str, pos: u32, size: u32) -> String {
-    let mut label = String::from(name);
-    while label.len() < 24 {
-        label.push(' ');
-    }
-    label.push_str(" : ");
+    let mut label = format_label_prefix(name);
     if size == 0 {
         label.push('\n');
         return label;
     }
     let end = pos.saturating_add(size).saturating_sub(1);
-    label.push_str(&format!("{pos:08X} - {end:08X} ({size:08X})\n"));
+    label.push_str(&format!("{pos:08x} - {end:08x} ({size:08x})\n"));
     label
+}
+
+fn format_label_prefix(name: &str) -> String {
+    let tabs = if name.len() < 8 {
+        3
+    } else if name.len() < 16 {
+        2
+    } else if name.len() < 24 {
+        1
+    } else {
+        1
+    };
+    format!("{name}{} : ", "\t".repeat(tabs))
 }
 
 fn section_total(layout: &LayoutPlan, section: SectionKind) -> u32 {
@@ -2772,15 +2788,15 @@ mod tests {
         let layout = plan_layout(&[s0.clone(), s1.clone()]);
         let text = build_map_text("a.x", &[s0, s1], &layout, 4, 2, 0, 0, &[]);
         assert!(text.contains("=========================================================="));
-        assert!(text.contains("a.x"));
-        assert!(text.contains("exec                     : 00000000"));
-        assert!(text.contains("text                     : 00000000 - 00000003 (00000004)"));
-        assert!(text.contains("data                     : 00000004 - 00000005 (00000002)"));
+        assert!(text.contains("A:a.x"));
+        assert!(text.contains("exec\t\t\t : 00000000"));
+        assert!(text.contains("text\t\t\t : 00000000 - 00000003 (00000004)"));
+        assert!(text.contains("data\t\t\t : 00000004 - 00000005 (00000002)"));
         assert!(text.contains("-------------------------- xdef --------------------------"));
-        assert!(text.contains("_text0                   : 00000000 (text   )"));
-        assert!(text.contains("_data0                   : 00000001 (data   )"));
+        assert!(text.contains("_text0\t\t\t : 00000000 (text   )"));
+        assert!(text.contains("_data0\t\t\t : 00000001 (data   )"));
         assert!(text.contains("obj0"));
-        assert!(text.contains("align                    : 00000002"));
+        assert!(text.contains("align\t\t\t : 00000002"));
     }
 
     #[test]
