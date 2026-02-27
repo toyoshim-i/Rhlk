@@ -1,4 +1,4 @@
-use crate::cli::Args;
+use crate::cli::{Args, G2lkMode, OutputRequest};
 use crate::format::FormatError;
 use crate::format::obj::{Command, ObjectFile, parse_object};
 use crate::layout::plan_layout;
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 pub fn run(args: Args) -> anyhow::Result<()> {
     validate_args(&args)?;
     print_title_if_needed(&args);
-    let g2lk_mode = resolve_g2lk_mode(&args);
+    let g2lk_mode = args.g2lk_mode();
     let expanded_inputs = expand_inputs(&args)?;
     let prepared = prepare_objects(args, expanded_inputs, g2lk_mode)?;
     emit_outputs(prepared)
@@ -27,7 +27,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
 
 struct PreparedLink {
     args: Args,
-    g2lk_mode: bool,
+    g2lk_mode: G2lkMode,
     expanded_inputs: Vec<String>,
     objects: Vec<ObjectFile>,
     summaries: Vec<ObjectSummary>,
@@ -49,10 +49,6 @@ fn print_title_if_needed(args: &Args) {
     }
 }
 
-fn resolve_g2lk_mode(args: &Args) -> bool {
-    !args.g2lk_off
-}
-
 fn expand_inputs(args: &Args) -> anyhow::Result<Vec<String>> {
     let mut expanded_inputs = args.inputs.clone();
     for indirect in &args.indirect_files {
@@ -68,7 +64,7 @@ fn expand_inputs(args: &Args) -> anyhow::Result<Vec<String>> {
 fn prepare_objects(
     args: Args,
     expanded_inputs: Vec<String>,
-    g2lk_mode: bool,
+    g2lk_mode: G2lkMode,
 ) -> anyhow::Result<PreparedLink> {
     let (objects, summaries, input_names) = load_objects_with_requests(&expanded_inputs, args.verbose)?;
     let mut objects = objects;
@@ -129,12 +125,10 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
     let output = resolve_output_path(args, &expanded_inputs);
     let output_s = output.to_string_lossy().to_string();
     let options = OutputOptions {
-        format: if args.make_mcs {
-            OutputFormat::Mcs
-        } else if args.r_format {
-            OutputFormat::R
-        } else {
-            OutputFormat::X
+        format: match args.output_request() {
+            OutputRequest::X => OutputFormat::X,
+            OutputRequest::R => OutputFormat::R,
+            OutputRequest::Mcs => OutputFormat::Mcs,
         },
         relocation_check: if args.r_no_check {
             RelocationCheck::Skip
@@ -154,7 +148,7 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
         base_address: args.base_address.unwrap_or(0),
         load_mode: args.load_mode.unwrap_or(0),
         section_info: args.section_info,
-        g2lk_mode,
+        g2lk_mode: matches!(g2lk_mode, G2lkMode::On),
     };
     write_output(
         &output_s,

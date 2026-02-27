@@ -1,6 +1,19 @@
 use clap::Parser;
 use std::ffi::OsString;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum G2lkMode {
+    Off,
+    On,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputRequest {
+    X,
+    R,
+    Mcs,
+}
+
 #[derive(Debug, Clone)]
 pub struct DefineArg {
     pub name: String,
@@ -179,6 +192,28 @@ pub struct Args {
 
     #[arg(value_name = "INPUT")]
     pub inputs: Vec<String>,
+}
+
+impl Args {
+    #[must_use]
+    pub fn g2lk_mode(&self) -> G2lkMode {
+        if self.g2lk_off {
+            G2lkMode::Off
+        } else {
+            G2lkMode::On
+        }
+    }
+
+    #[must_use]
+    pub fn output_request(&self) -> OutputRequest {
+        if self.make_mcs {
+            OutputRequest::Mcs
+        } else if self.r_format {
+            OutputRequest::R
+        } else {
+            OutputRequest::X
+        }
+    }
 }
 
 #[cfg(test)]
