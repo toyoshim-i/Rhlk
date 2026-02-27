@@ -3036,6 +3036,82 @@ mod tests {
     }
 
     #[test]
+    fn ctor_patch_requires_ctor_symbol() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::Opaque {
+                    code: 0x4c01,
+                    payload: vec![0x00, 0x00, 0x00, 0x00],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let err = build_x_image_with_options(&[obj], &[sum], &layout, false).expect_err("must fail");
+        assert!(err.to_string().contains("ctor table symbol is missing"));
+    }
+
+    #[test]
+    fn ctor_patch_rejects_table_overflow() {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 0,
+                    name: b"text".to_vec(),
+                },
+                Command::Header {
+                    section: 0x02,
+                    size: 8,
+                    name: b"data".to_vec(),
+                },
+                Command::ChangeSection { section: 0x02 },
+                Command::RawData(vec![0; 8]),
+                Command::DefineSymbol {
+                    section: 0x02,
+                    value: 0,
+                    name: b"___CTOR_LIST__".to_vec(),
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::Opaque {
+                    code: 0x4c01,
+                    payload: vec![0x00, 0x00, 0x00, 0x00],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut sum0 = mk_summary(2, 0, 8);
+        sum0.symbols.push(Symbol {
+            name: b"___CTOR_LIST__".to_vec(),
+            section: SectionKind::Data,
+            value: 0,
+        });
+        let sum1 = mk_summary(2, 2, 0);
+        let layout = plan_layout(&[sum0.clone(), sum1.clone()]);
+        let err =
+            build_x_image_with_options(&[obj0, obj1], &[sum0, sum1], &layout, false).expect_err("must fail");
+        assert!(err.to_string().contains("ctor/dtor table overflows"));
+    }
+
+    #[test]
     fn accepts_doctor_dodtor_commands_as_noop() {
         for code in [0xe00c, 0xe00d] {
             let obj = ObjectFile {
