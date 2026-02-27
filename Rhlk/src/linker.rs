@@ -534,48 +534,29 @@ fn load_objects_with_requests(
             continue;
         }
         let bytes = std::fs::read(&abs).map_err(|_| {
-            let name = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or_else(|| path.to_str().unwrap_or("<non-utf8>"));
+            let name = display_name(&path);
             anyhow::anyhow!("ファイルがありません: {name}")
         })?;
         match parse_object(&bytes) {
             Ok(object) => {
-                let command_count = object.commands.len();
                 let summary = resolve_object(&object);
-
-                if verbose {
-                    let label = path.to_string_lossy();
-                    println!("parsed {label}: {command_count} commands");
-                    println!(
-                        "  align={} sections: declared={} observed={} symbols={} xrefs={} requests={}",
-                        summary.object_align,
-                        summary.declared_section_sizes.len(),
-                        summary.observed_section_usage.len(),
-                        summary.symbols.len(),
-                        summary.xrefs.len(),
-                        summary.requests.len()
-                    );
-                }
-
-                let base_dir = abs.parent().unwrap_or(Path::new("."));
-                enqueue_requests(
+                let label = path.to_string_lossy().to_string();
+                add_loaded_object(
+                    verbose,
                     &mut pending,
-                    base_dir,
-                    &summary.requests,
+                    abs.parent().unwrap_or(Path::new(".")),
+                    &mut objects,
+                    &mut summaries,
+                    &mut input_names,
+                    label,
+                    object,
+                    summary,
                 )?;
-                objects.push(object);
-                summaries.push(summary);
-                input_names.push(path.to_string_lossy().to_string());
             }
             Err(FormatError::UnsupportedCommand(_)) if is_archive_like(&path) && is_ar_archive(&bytes) => {
                 let members = parse_ar_members(&bytes)?;
                 if members.is_empty() {
-                    let name = path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or_else(|| path.to_str().unwrap_or("<non-utf8>"));
+                    let name = display_name(&path);
                     anyhow::bail!("archive has no members: {name}");
                 }
                 let base_dir = abs.parent().unwrap_or(Path::new("."));
@@ -593,35 +574,67 @@ fn load_objects_with_requests(
                     if !selected.contains(&idx) {
                         continue;
                     }
-                    if verbose {
-                        println!(
-                            "parsed {}({}): {} commands",
-                            path.to_string_lossy(),
-                            member_name,
-                            object.commands.len()
-                        );
-                    }
-                    enqueue_requests(
+                    let label = format!("{}({})", path.to_string_lossy(), member_name);
+                    add_loaded_object(
+                        verbose,
                         &mut pending,
                         base_dir,
-                        &summary.requests,
+                        &mut objects,
+                        &mut summaries,
+                        &mut input_names,
+                        label,
+                        object,
+                        summary,
                     )?;
-                    objects.push(object);
-                    summaries.push(summary);
-                    input_names.push(format!("{}({})", path.to_string_lossy(), member_name));
                 }
             }
             Err(e) => {
-                let name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_else(|| path.to_str().unwrap_or("<non-utf8>"));
+                let name = display_name(&path);
                 anyhow::bail!("{name}: {e}");
             }
         }
     }
 
     Ok((objects, summaries, input_names))
+}
+
+fn add_loaded_object(
+    verbose: bool,
+    pending: &mut VecDeque<PathBuf>,
+    base_dir: &Path,
+    objects: &mut Vec<crate::format::obj::ObjectFile>,
+    summaries: &mut Vec<ObjectSummary>,
+    input_names: &mut Vec<String>,
+    label: String,
+    object: crate::format::obj::ObjectFile,
+    summary: ObjectSummary,
+) -> anyhow::Result<()> {
+    if verbose {
+        println!("parsed {}: {} commands", label, object.commands.len());
+        println!(
+            "  align={} sections: declared={} observed={} symbols={} xrefs={} requests={}",
+            summary.object_align,
+            summary.declared_section_sizes.len(),
+            summary.observed_section_usage.len(),
+            summary.symbols.len(),
+            summary.xrefs.len(),
+            summary.requests.len()
+        );
+    }
+    enqueue_requests(pending, base_dir, &summary.requests)?;
+    objects.push(object);
+    summaries.push(summary);
+    input_names.push(label);
+    Ok(())
+}
+
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .map_or_else(
+            || path.to_string_lossy().to_string(),
+            std::string::ToString::to_string,
+        )
 }
 
 fn enqueue_requests(
@@ -632,7 +645,7 @@ fn enqueue_requests(
     for req in requests {
         let req_name = String::from_utf8_lossy(req).to_string();
         let req_path = resolve_requested_path(base_dir, &req_name)
-            .ok_or_else(|| anyhow::anyhow!("ファイルがありません: {}", req_name))?;
+            .ok_or_else(|| anyhow::anyhow!("ファイルがありません: {req_name}"))?;
         pending.push_back(req_path);
     }
     Ok(())
@@ -656,12 +669,7 @@ fn resolve_requested_path(base_dir: &Path, req_name: &str) -> Option<PathBuf> {
         add_candidates(base_dir.join(req));
         add_candidates(PathBuf::from(req));
     }
-    for c in candidates {
-        if c.exists() {
-            return Some(c);
-        }
-    }
-    None
+    candidates.into_iter().find(|c| c.exists())
 }
 
 fn absolutize_path(path: &Path) -> anyhow::Result<PathBuf> {

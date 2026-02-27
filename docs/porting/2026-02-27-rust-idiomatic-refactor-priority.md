@@ -118,6 +118,37 @@
 - 改善:
   - normalize 処理を関数ファイル分離、将来的に Rust 実装化して OS 非依存化。
 
+## 優先度 P3（2026-02-28 再監査で追加）
+
+### P3-1: `linker.rs` の入力ロード補助整理
+- 該当:
+  - `Rhlk/src/linker.rs:load_objects_with_requests`
+  - `Rhlk/src/linker.rs:resolve_requested_path`
+- 問題:
+  - 単一関数に責務が集中し、エラー文言組み立てが重複。
+  - Clippy の `too_many_lines` / `manual_find` が残る。
+- 改善:
+  - 共通処理（verbose表示・request enqueue・push）を `add_loaded_object` に抽出。
+  - 表示名組み立てを `display_name` に抽出。
+  - 候補検索を `Iterator::find` 化。
+
+### P3-2: `writer.rs` の符号/桁あふれ cast 集中地帯の明示化
+- 該当:
+  - `Rhlk/src/writer.rs` の `patch_opaque_commands` 周辺
+- 問題:
+  - `as` による縮小変換が多く、意図の明確化が必要。
+- 改善:
+  - 範囲チェック済み変換 helper を導入し、危険な cast を集約。
+  - `u32::from`, `i32::cast_unsigned` など意図表現を統一。
+
+### P3-3: `format/obj.rs` の opcode 判定テーブル整理
+- 該当:
+  - `Rhlk/src/format/obj.rs` の `has_payload` / `payload_size_from_code`
+- 問題:
+  - `match_same_arms` が多く、条件の意図が読み取りづらい。
+- 改善:
+  - opcode分類定数・小関数を導入して分岐を簡潔化。
+
 ## 実施順（推奨）
 1. P0-1（エラー型）
 2. P0-3（設定 struct + run 分割）
@@ -146,6 +177,9 @@
     - `prepare_objects`
     - `emit_outputs`
     - `validate_start_address_uniqueness`
+- P3-1: 完了
+  - `load_objects_with_requests` の共通処理を `add_loaded_object` / `display_name` へ抽出。
+  - `resolve_requested_path` を `Iterator::find` 化。
 
 検証:
 - `cargo test -q --manifest-path Rhlk/Cargo.toml`: pass
