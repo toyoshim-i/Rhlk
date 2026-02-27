@@ -3855,6 +3855,78 @@ mod tests {
         assert_eq!(&image[64..65], &[0x02]);
     }
 
+    fn assert_6b_r_section_displacement(lo: u8) {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 1,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x6b00 | lo as u16,
+                    payload: vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 1,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0x5a]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut s0 = mk_summary(2, 1, 0);
+        s0.xrefs.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        let mut s1 = mk_summary(2, 1, 0);
+        s1.symbols.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let layout = plan_layout(&[s0.clone(), s1.clone()]);
+        let image = build_x_image(&[obj0, obj1], &[s0, s1], &layout).expect("x image");
+        assert_eq!(&image[64..65], &[0x02]); // sym(text)=2, no r-section placement offset
+    }
+
+    #[test]
+    fn materializes_6b05_byte_displacement_rdata() {
+        assert_6b_r_section_displacement(0x05);
+    }
+
+    #[test]
+    fn materializes_6b06_byte_displacement_rbss() {
+        assert_6b_r_section_displacement(0x06);
+    }
+
+    #[test]
+    fn materializes_6b07_byte_displacement_rstack() {
+        assert_6b_r_section_displacement(0x07);
+    }
+
+    #[test]
+    fn materializes_6b09_byte_displacement_rlbss() {
+        assert_6b_r_section_displacement(0x09);
+    }
+
+    #[test]
+    fn materializes_6b0a_byte_displacement_rlstack() {
+        assert_6b_r_section_displacement(0x0a);
+    }
+
     #[test]
     fn materializes_9200_from_calc_stack_value() {
         let obj = ObjectFile {
