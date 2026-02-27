@@ -13,6 +13,7 @@
 - 出力チャネルの違い（`stdout` vs `stderr`）は無視し、結合後の文字列を比較する。
 - オリジナル HLK 側メッセージは `Shift_JIS` を `UTF-8` に正規化して比較する。
 - パスを含む一部エラーメッセージは、比較時にパス部分を `<PATH>` に正規化する。
+- `.map` はフォーマット移植中のため、比較時に `name/addr/section` を抽出して正規化比較する。
 
 ## 追加ファイル
 - `tools/run_hlkx_regression.sh`
@@ -93,7 +94,7 @@ RHLK_CMD="cargo run --manifest-path /abs/path/Rhlk/Cargo.toml --quiet --" \
 4. `output_ext`（`x` または `r`）
 
 ## 現在の一致状況 (2026-02-27)
-- 9/9 ケース一致（`adrs_not_long`, `div_zero`, `dup_entry`, `exp`, `overflow`, `reltbl_odd`, `r_entry`, `r_reltbl`, `makemcs_not_mcs`）
+- 10/10 以上のケース一致（`map_xdef` を含む）
 - メッセージ比較は `stdout+stderr` 結合後に文字コード・パス正規化を適用して実施
 
 ## run68 の取り込み

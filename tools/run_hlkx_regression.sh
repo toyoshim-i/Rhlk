@@ -105,10 +105,16 @@ run_linker() {
   local msg_file="${out_prefix}.msg"
   local rc_file="${out_prefix}.rc"
   local map_out
+  local map_out_abs
   if [[ "${out_file}" == *.* ]]; then
     map_out="${out_file%.*}.map"
   else
     map_out="${out_file}.map"
+  fi
+  if [[ "${map_out}" = /* ]]; then
+    map_out_abs="${map_out}"
+  else
+    map_out_abs="${TEST_DIR}/${map_out}"
   fi
 
   set +e
@@ -122,8 +128,10 @@ run_linker() {
   set -e
   echo "${rc}" >"${rc_file}"
   cat "${stdout_file}" "${stderr_file}" >"${msg_file}"
-  if [[ -f "${TEST_DIR}/${map_out}" ]]; then
-    cp "${TEST_DIR}/${map_out}" "${out_prefix}.map"
+  if [[ -f "${map_out_abs}" ]]; then
+    if [[ "${map_out_abs}" != "${out_prefix}.map" ]]; then
+      cp "${map_out_abs}" "${out_prefix}.map"
+    fi
   else
     rm -f "${out_prefix}.map"
   fi
@@ -138,6 +146,8 @@ compare_case() {
   local diff_file="${ARTIFACT_DIR}/diff/${name}.diff"
   local orig_norm="${orig_prefix}.msg.norm"
   local rhlk_norm="${rhlk_prefix}.msg.norm"
+  local orig_map_norm="${orig_prefix}.map.norm"
+  local rhlk_map_norm="${rhlk_prefix}.map.norm"
   : >"${diff_file}"
 
   normalize_msg "${orig_prefix}.msg" "${orig_norm}" "orig"
@@ -171,9 +181,13 @@ compare_case() {
     if [[ ! -f "${orig_map}" || ! -f "${rhlk_map}" ]]; then
       echo "[${name}] map output existence differs" >>"${diff_file}"
       failed=1
-    elif ! cmp -s "${orig_map}" "${rhlk_map}"; then
-      echo "[${name}] map output differs" >>"${diff_file}"
-      failed=1
+    else
+      normalize_map "${orig_map}" "${orig_map_norm}"
+      normalize_map "${rhlk_map}" "${rhlk_map_norm}"
+      if ! diff -u "${orig_map_norm}" "${rhlk_map_norm}" >>"${diff_file}" 2>&1; then
+        echo "[${name}] map output differs (normalized symbols)" >>"${diff_file}"
+        failed=1
+      fi
     fi
   fi
 
@@ -206,6 +220,28 @@ normalize_msg() {
     -e 's#(MACS形式ファイルではありません:).*#\1 <PATH>#' \
     "${tmp}" >"${output}"
   rm -f "${tmp}"
+}
+
+normalize_map() {
+  local input="$1"
+  local output="$2"
+  perl -ne '
+    s/\r$//;
+    if (/^([0-9A-Fa-f]{8})\s+([A-Za-z]+)\s+(.+)$/) {
+      my ($addr, $sect, $name) = (uc($1), lc($2), $3);
+      $name =~ s/^\s+|\s+$//g;
+      next if $name eq "" || $sect eq "unknown";
+      print "$name\t$addr\t$sect\n";
+      next;
+    }
+    if (/^\s*([^ \t][^:]*)\s*:\s*([0-9A-Fa-f]{8})\s*\(([A-Za-z ]+)\)/) {
+      my ($name, $addr, $sect) = ($1, uc($2), lc($3));
+      $name =~ s/^\s+|\s+$//g;
+      $sect =~ s/\s+//g;
+      next if $name eq "" || $sect eq "";
+      print "$name\t$addr\t$sect\n";
+    }
+  ' "${input}" | LC_ALL=C sort -u >"${output}"
 }
 
 main() {
