@@ -68,6 +68,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         args.omit_bss,
         args.make_mcs,
         args.cut_symbols,
+        args.base_address.unwrap_or(0),
         &objects,
         &input_names,
         &summaries,
@@ -990,6 +991,7 @@ mod tests {
             no_x_ext: false,
             opt_an: false,
             align: None,
+            base_address: None,
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
@@ -998,6 +1000,7 @@ mod tests {
             quiet: false,
             warn_off: false,
             title: false,
+            section_info: false,
             inputs: vec!["foo.o".to_string()],
         };
         assert_eq!(resolve_output_path(&args, &args.inputs), "foo.x");
@@ -1036,6 +1039,7 @@ mod tests {
             no_x_ext: false,
             opt_an: false,
             align: None,
+            base_address: None,
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
@@ -1044,6 +1048,7 @@ mod tests {
             quiet: false,
             warn_off: false,
             title: false,
+            section_info: false,
             inputs: vec![input.to_string_lossy().to_string()],
         };
         run(args).expect("run");
@@ -1073,6 +1078,7 @@ mod tests {
             no_x_ext: false,
             opt_an: false,
             align: None,
+            base_address: None,
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
@@ -1081,6 +1087,7 @@ mod tests {
             quiet: false,
             warn_off: false,
             title: false,
+            section_info: false,
             inputs: vec![input.to_string_lossy().to_string()],
         };
         run(args).expect("run");
@@ -1100,6 +1107,7 @@ mod tests {
             no_x_ext: false,
             opt_an: false,
             align: Some(3),
+            base_address: None,
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
@@ -1108,6 +1116,7 @@ mod tests {
             quiet: false,
             warn_off: false,
             title: false,
+            section_info: false,
             inputs: vec!["foo.o".to_string()],
         };
         let err = run(args).expect_err("must reject invalid align");

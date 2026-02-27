@@ -14,6 +14,7 @@ pub fn write_output(
     omit_bss: bool,
     make_mcs: bool,
     cut_symbols: bool,
+    base_address: u32,
     objects: &[ObjectFile],
     input_paths: &[String],
     summaries: &[ObjectSummary],
@@ -40,6 +41,10 @@ pub fn write_output(
             }
         })?
     };
+
+    if !r_format && base_address != 0 {
+        apply_base_address_to_x_header(&mut payload, base_address)?;
+    }
 
     if make_mcs {
         let bss_extra = if omit_bss {
@@ -73,6 +78,17 @@ pub fn write_output(
         })?;
     }
     std::fs::write(output_path, payload).with_context(|| format!("failed to write {output_path}"))?;
+    Ok(())
+}
+
+fn apply_base_address_to_x_header(payload: &mut [u8], base_address: u32) -> Result<()> {
+    if payload.len() < 64 || payload[0] != b'H' || payload[1] != b'U' {
+        bail!("invalid x-format payload while applying base address");
+    }
+    let exec_off = u32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]);
+    let exec_abs = base_address.wrapping_add(exec_off);
+    payload[4..8].copy_from_slice(&base_address.to_be_bytes());
+    payload[8..12].copy_from_slice(&exec_abs.to_be_bytes());
     Ok(())
 }
 
@@ -2487,7 +2503,8 @@ mod tests {
     use crate::layout::plan_layout;
     use crate::resolver::{ObjectSummary, SectionKind, Symbol};
     use crate::writer::{
-        build_map_text, build_r_payload, build_x_image, build_x_image_with_options, validate_link_inputs,
+        apply_base_address_to_x_header, build_map_text, build_r_payload, build_x_image,
+        build_x_image_with_options, validate_link_inputs,
         validate_r_convertibility,
     };
 
@@ -2674,6 +2691,17 @@ mod tests {
         ]);
         assert!(with_sym_size > 0);
         assert_eq!(without_sym_size, 0);
+    }
+
+    #[test]
+    fn applies_base_address_to_x_header() {
+        let mut payload = vec![0u8; 64];
+        payload[0] = b'H';
+        payload[1] = b'U';
+        payload[8..12].copy_from_slice(&0x0000_0012u32.to_be_bytes());
+        apply_base_address_to_x_header(&mut payload, 0x0000_6800).expect("patch header");
+        assert_eq!(&payload[4..8], &0x0000_6800u32.to_be_bytes());
+        assert_eq!(&payload[8..12], &0x0000_6812u32.to_be_bytes());
     }
 
     #[test]

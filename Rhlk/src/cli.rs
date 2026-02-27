@@ -1,5 +1,15 @@
 use clap::Parser;
 
+fn parse_u32_with_hex(input: &str) -> Result<u32, String> {
+    let s = input.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16).map_err(|e| format!("invalid hex value '{input}': {e}"))
+    } else {
+        s.parse::<u32>()
+            .map_err(|e| format!("invalid decimal value '{input}': {e}"))
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "rhlk", version)]
 pub struct Args {
@@ -20,6 +30,9 @@ pub struct Args {
 
     #[arg(short = 'e')]
     pub align: Option<u32>,
+
+    #[arg(short = 'b', value_parser = parse_u32_with_hex)]
+    pub base_address: Option<u32>,
 
     #[arg(long = "makemcs")]
     pub make_mcs: bool,
@@ -44,6 +57,9 @@ pub struct Args {
 
     #[arg(short = 't')]
     pub title: bool,
+
+    #[arg(short = 's')]
+    pub section_info: bool,
 
     #[arg(value_name = "INPUT")]
     pub inputs: Vec<String>,
