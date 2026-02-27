@@ -180,6 +180,9 @@
 - P3-1: 完了
   - `load_objects_with_requests` の共通処理を `add_loaded_object` / `display_name` へ抽出。
   - `resolve_requested_path` を `Iterator::find` 化。
+- P3-2: 進行中
+  - `writer.rs` の `patch_opaque` 系で数値変換 helper（`code_hi/lo`, `i32_low_u8/u16`, bit-cast helper）を導入。
+  - `label_no as u32` 等を `u32::from(...)` に置換し、意図しない縮小 cast を削減。
 
 検証:
 - `cargo test -q --manifest-path Rhlk/Cargo.toml`: pass

@@ -1232,7 +1232,7 @@ fn patch_opaque_commands(
 }
 
 fn materialize_stack_write_opaque(code: u16, calc_stack: &mut Vec<ExprEntry>) -> Option<Vec<u8>> {
-    let hi = (code >> 8) as u8;
+    let hi = code_hi(code);
     let v = match hi {
         opcode::OPH_WRT_STK_BYTE
         | opcode::OPH_WRT_STK_WORD_TEXT
@@ -1244,13 +1244,13 @@ fn materialize_stack_write_opaque(code: u16, calc_stack: &mut Vec<ExprEntry>) ->
         _ => return None,
     };
     let out = match hi {
-        opcode::OPH_WRT_STK_BYTE => vec![0x00, v.value as u8],
-        opcode::OPH_WRT_STK_BYTE_RAW => vec![v.value as u8],
+        opcode::OPH_WRT_STK_BYTE => vec![0x00, i32_low_u8(v.value)],
+        opcode::OPH_WRT_STK_BYTE_RAW => vec![i32_low_u8(v.value)],
         opcode::OPH_WRT_STK_WORD_TEXT | opcode::OPH_WRT_STK_WORD_RELOC => {
-            (v.value as u16).to_be_bytes().to_vec()
+            i32_low_u16(v.value).to_be_bytes().to_vec()
         }
         opcode::OPH_WRT_STK_LONG | opcode::OPH_WRT_STK_LONG_ALT | opcode::OPH_WRT_STK_LONG_RELOC => {
-            (v.value as u32).to_be_bytes().to_vec()
+            i32_bits_to_u32(v.value).to_be_bytes().to_vec()
         }
         _ => return None,
     };
@@ -1265,7 +1265,7 @@ fn evaluate_push_80_for_patch(
 ) -> Option<ExprEntry> {
     if matches!(lo, 0xfc..=0xff) {
         let label_no = read_u16_be(payload)?;
-        let xref = summary.xrefs.iter().find(|x| x.value == label_no as u32)?;
+        let xref = summary.xrefs.iter().find(|x| x.value == u32::from(label_no))?;
         let sym = global_symbol_addrs.get(&xref.name)?;
         let stat = match expr::section_stat(sym.section) {
             0 => 0,
@@ -1274,7 +1274,7 @@ fn evaluate_push_80_for_patch(
         };
         return Some(ExprEntry {
             stat,
-            value: sym.addr as i32,
+            value: u32_bits_to_i32(sym.addr),
         });
     }
     if lo <= 0x0a {
@@ -1296,13 +1296,13 @@ fn materialize_opaque(
     global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
     placement: &BTreeMap<SectionKind, u32>,
 ) -> Option<Vec<u8>> {
-    let hi = (code >> 8) as u8;
+    let hi = code_hi(code);
     let value = resolve_opaque_value(code, payload, summary, global_symbol_addrs, placement)?;
     match hi {
-        0x40 | 0x50 => Some(vec![0x00, value as u8]),
-        0x43 | 0x47 | 0x53 | 0x57 | 0x6b => Some(vec![value as u8]),
-        0x41 | 0x45 | 0x51 | 0x55 | 0x65 | 0x69 => Some((value as u16).to_be_bytes().to_vec()),
-        0x42 | 0x46 | 0x52 | 0x56 | 0x6a => Some((value as u32).to_be_bytes().to_vec()),
+        0x40 | 0x50 => Some(vec![0x00, i32_low_u8(value)]),
+        0x43 | 0x47 | 0x53 | 0x57 | 0x6b => Some(vec![i32_low_u8(value)]),
+        0x41 | 0x45 | 0x51 | 0x55 | 0x65 | 0x69 => Some(i32_low_u16(value).to_be_bytes().to_vec()),
+        0x42 | 0x46 | 0x52 | 0x56 | 0x6a => Some(i32_bits_to_u32(value).to_be_bytes().to_vec()),
         _ => None,
     }
 }
@@ -1314,22 +1314,24 @@ fn resolve_opaque_value(
     global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
     placement: &BTreeMap<SectionKind, u32>,
 ) -> Option<i32> {
-    let hi = (code >> 8) as u8;
-    let lo = code as u8;
+    let hi = code_hi(code);
+    let lo = code_lo(code);
 
     if matches!(hi, 0x65 | 0x69 | 0x6a | 0x6b) {
         let adr = read_i32_be(payload)?;
         let label_no = read_u16_be(payload.get(4..)?)?;
-        let xref = summary.xrefs.iter().find(|x| x.value == label_no as u32)?;
+        let xref = summary.xrefs.iter().find(|x| x.value == u32::from(label_no))?;
         let sym = global_symbol_addrs.get(&xref.name)?;
         let base = section_value_with_placement(lo, adr, placement)?;
-        return Some((sym.addr as i32).wrapping_sub(base));
+        return Some(u32_bits_to_i32(sym.addr).wrapping_sub(base));
     }
 
     let mut base = if matches!(lo, 0xfc..=0xff) {
         let label_no = read_u16_be(payload)?;
-        let xref = summary.xrefs.iter().find(|x| x.value == label_no as u32)?;
-        global_symbol_addrs.get(&xref.name).map(|v| v.addr as i32)?
+        let xref = summary.xrefs.iter().find(|x| x.value == u32::from(label_no))?;
+        global_symbol_addrs
+            .get(&xref.name)
+            .map(|v| u32_bits_to_i32(v.addr))?
     } else if (0x01..=0x0a).contains(&lo) {
         let v = read_i32_be(payload)?;
         section_value_with_placement(lo, v, placement)?
@@ -1362,7 +1364,7 @@ fn section_value_with_placement(lo: u8, value: i32, placement: &BTreeMap<Section
         0x0a => SectionKind::RLStack,
         _ => return None,
     };
-    let base = placement.get(&sect).copied().unwrap_or(0) as i32;
+    let base = u32_bits_to_i32(placement.get(&sect).copied().unwrap_or(0));
     Some(base.wrapping_add(value))
 }
 
@@ -1375,7 +1377,7 @@ fn should_relocate(
     if !needs_relocation(code) {
         return false;
     }
-    let lo = (code & 0x00ff) as u8;
+    let lo = code_lo(code);
     if is_reloc_section(lo) {
         return true;
     }
@@ -1383,7 +1385,7 @@ fn should_relocate(
         let Some(label_no) = read_u16_be(payload) else {
             return false;
         };
-        let Some(xref) = summary.xrefs.iter().find(|x| x.value == label_no as u32) else {
+        let Some(xref) = summary.xrefs.iter().find(|x| x.value == u32::from(label_no)) else {
             return false;
         };
         let Some(sym) = global_symbol_addrs.get(&xref.name) else {
@@ -1410,7 +1412,8 @@ fn encode_relocation_offsets(offsets: &[u32]) -> Vec<u8> {
     let mut out = Vec::new();
     for &off in offsets {
         if off < 0x10000 && off != 1 {
-            out.extend_from_slice(&(off as u16).to_be_bytes());
+            let short = u16::try_from(off).expect("off < 0x10000");
+            out.extend_from_slice(&short.to_be_bytes());
         } else {
             out.extend_from_slice(&1u16.to_be_bytes());
             out.extend_from_slice(&off.to_be_bytes());
@@ -1426,9 +1429,36 @@ fn patch_mcs_size(payload: &mut [u8], bss_size: u32) -> Result<()> {
     if &payload[0..4] != b"MACS" || &payload[4..8] != b"DATA" {
         bail!("not MACS format");
     }
-    let total_size = (payload.len() as u32).saturating_add(bss_size);
+    let total_size = u32::try_from(payload.len())
+        .unwrap_or(u32::MAX)
+        .saturating_add(bss_size);
     put_u32_be(payload, 10, total_size);
     Ok(())
+}
+
+fn code_hi(code: u16) -> u8 {
+    code.to_be_bytes()[0]
+}
+
+fn code_lo(code: u16) -> u8 {
+    code.to_be_bytes()[1]
+}
+
+fn i32_low_u8(value: i32) -> u8 {
+    value.to_be_bytes()[3]
+}
+
+fn i32_low_u16(value: i32) -> u16 {
+    let b = value.to_be_bytes();
+    u16::from_be_bytes([b[2], b[3]])
+}
+
+fn i32_bits_to_u32(value: i32) -> u32 {
+    u32::from_be_bytes(value.to_be_bytes())
+}
+
+fn u32_bits_to_i32(value: u32) -> i32 {
+    i32::from_be_bytes(value.to_be_bytes())
 }
 
 fn build_x_header(
