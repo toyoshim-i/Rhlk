@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
@@ -210,7 +211,89 @@ fn build_map_text(
         }
         out.push_str(&format_symbol_line(name, *addr, section_tag(*sect)));
     }
+
+    let def_owner = build_definition_owner_map(summaries, input_paths);
+    for (idx, summary) in summaries.iter().enumerate() {
+        out.push_str("\n\n");
+        out.push_str("==========================================================\n");
+        out.push_str(&format!("{}\n", display_obj_name(input_paths.get(idx), idx)));
+        out.push_str("==========================================================\n");
+        out.push_str(&format_align_line(summary.object_align));
+
+        let placement = layout
+            .placements
+            .get(idx)
+            .map(|p| &p.by_section)
+            .cloned()
+            .unwrap_or_default();
+        for (name, kind) in [
+            ("text", SectionKind::Text),
+            ("data", SectionKind::Data),
+            ("bss", SectionKind::Bss),
+            ("stack", SectionKind::Stack),
+            ("rdata", SectionKind::RData),
+            ("rbss", SectionKind::RBss),
+            ("rcommon", SectionKind::RCommon),
+            ("rstack", SectionKind::RStack),
+            ("rldata", SectionKind::RLData),
+            ("rlbss", SectionKind::RLBss),
+            ("rlcommon", SectionKind::RLCommon),
+            ("rlstack", SectionKind::RLStack),
+        ] {
+            let pos = placement.get(&kind).copied().unwrap_or(0);
+            let size = summary
+                .declared_section_sizes
+                .get(&kind)
+                .copied()
+                .or_else(|| summary.observed_section_usage.get(&kind).copied())
+                .unwrap_or(0);
+            out.push_str(&format_section_line(name, pos, size));
+        }
+
+        if !summary.xrefs.is_empty() {
+            out.push_str("-------------------------- xref --------------------------\n");
+            for xr in &summary.xrefs {
+                let n = String::from_utf8_lossy(&xr.name);
+                let owner = def_owner
+                    .get(xr.name.as_slice())
+                    .cloned()
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                out.push_str(&format!("{n:<24} : in {owner}\n"));
+            }
+        }
+        if !summary.symbols.is_empty() {
+            out.push_str("-------------------------- xdef --------------------------\n");
+            for sym in &summary.symbols {
+                let n = String::from_utf8_lossy(&sym.name);
+                out.push_str(&format_symbol_line(&n, sym.value, section_tag(sym.section)));
+            }
+        }
+    }
     out
+}
+
+fn build_definition_owner_map(
+    summaries: &[ObjectSummary],
+    input_paths: &[String],
+) -> HashMap<Vec<u8>, String> {
+    let mut out = HashMap::<Vec<u8>, String>::new();
+    for (idx, sum) in summaries.iter().enumerate() {
+        let owner = display_obj_name(input_paths.get(idx), idx);
+        for sym in &sum.symbols {
+            out.entry(sym.name.clone()).or_insert_with(|| owner.clone());
+        }
+    }
+    out
+}
+
+fn display_obj_name(path: Option<&String>, idx: usize) -> String {
+    if let Some(p) = path {
+        return Path::new(p)
+            .file_name()
+            .map(|v| v.to_string_lossy().to_string())
+            .unwrap_or_else(|| p.clone());
+    }
+    format!("obj{idx}")
 }
 
 fn collect_xrefs_with_owner(summaries: &[ObjectSummary], input_paths: &[String]) -> Vec<(String, String)> {
@@ -239,6 +322,10 @@ fn collect_xrefs_with_owner(summaries: &[ObjectSummary], input_paths: &[String])
 
 fn format_symbol_line(name: &str, addr: u32, sect: &str) -> String {
     format!("{name:<24} : {addr:08X} ({sect:<7})\n")
+}
+
+fn format_align_line(align: u32) -> String {
+    format!("{:<24} : {align:08X}\n", "align")
 }
 
 fn format_section_line(name: &str, pos: u32, size: u32) -> String {
@@ -2405,6 +2492,8 @@ mod tests {
         assert!(text.contains("-------------------------- rlcomm ------------------------"));
         assert!(text.contains("_text0                   : 00000000 (TEXT   )"));
         assert!(text.contains("_data0                   : 00000005 (DATA   )"));
+        assert!(text.contains("obj0"));
+        assert!(text.contains("align                    : 00000002"));
     }
 
     #[test]
