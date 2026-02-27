@@ -14,6 +14,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
     }
 
     let (objects, summaries, input_names) = load_objects_with_requests(&args.inputs, args.verbose)?;
+    validate_unresolved_symbols(&summaries, &input_names)?;
 
     let mut start_seen = false;
     for (idx, summary) in summaries.iter().enumerate() {
@@ -64,6 +65,32 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         println!("rhlk: parsed {} input file(s)", input_names.len());
     }
     Ok(())
+}
+
+fn validate_unresolved_symbols(summaries: &[ObjectSummary], input_names: &[String]) -> anyhow::Result<()> {
+    let mut defs = HashSet::<Vec<u8>>::new();
+    for s in summaries {
+        for sym in &s.symbols {
+            defs.insert(sym.name.clone());
+        }
+    }
+    let mut messages = Vec::<String>::new();
+    for (idx, s) in summaries.iter().enumerate() {
+        for xr in &s.xrefs {
+            if defs.contains(&xr.name) {
+                continue;
+            }
+            let name = String::from_utf8_lossy(&xr.name);
+            let file = input_names.get(idx).cloned().unwrap_or_else(|| "<unknown>".to_string());
+            messages.push(format!("未定義シンボル: {name} in {file}"));
+        }
+    }
+    if messages.is_empty() {
+        return Ok(());
+    }
+    messages.sort();
+    messages.dedup();
+    anyhow::bail!("{}", messages.join("\n"));
 }
 
 fn load_objects_with_requests(
@@ -371,7 +398,10 @@ fn resolve_gnu_long_name(table: Option<&[u8]>, offset: usize) -> Option<String> 
 
 #[cfg(test)]
 mod tests {
-    use super::{is_ar_archive, load_objects_with_requests, parse_ar_members, select_archive_members};
+    use super::{
+        is_ar_archive, load_objects_with_requests, parse_ar_members, select_archive_members,
+        validate_unresolved_symbols,
+    };
     use crate::format::obj::parse_object;
     use crate::resolver::resolve_object;
     use std::fs;
@@ -641,5 +671,14 @@ mod tests {
         ];
         let picked = select_archive_members(&[main_sum], &members);
         assert_eq!(picked, vec![0, 1]);
+    }
+
+    #[test]
+    fn reports_unresolved_symbols_after_expansion() {
+        let main = parse_object(&obj_with_xref_and_request("foo", "libx.a")).expect("main parse");
+        let main_sum = resolve_object(&main);
+        let inputs = vec!["main.o".to_string()];
+        let err = validate_unresolved_symbols(&[main_sum], &inputs).expect_err("must fail");
+        assert!(err.to_string().contains("未定義シンボル: foo in main.o"));
     }
 }
