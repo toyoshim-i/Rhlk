@@ -54,9 +54,13 @@ fn print_title_if_needed(runtime: RuntimeConfig) {
 fn expand_inputs(args: &Args) -> anyhow::Result<Vec<String>> {
     let mut expanded_inputs = args.inputs.clone();
     for indirect in &args.indirect_files {
-        expanded_inputs.extend(load_indirect_inputs(indirect)?);
+        expanded_inputs.extend(load_indirect_inputs(Path::new(indirect))?);
     }
-    expanded_inputs.extend(resolve_lib_inputs(args)?);
+    expanded_inputs.extend(
+        resolve_lib_inputs(args)?
+            .into_iter()
+            .map(|path| path.to_string_lossy().to_string()),
+    );
     if expanded_inputs.is_empty() {
         anyhow::bail!("no input files")
     }
@@ -196,17 +200,17 @@ fn validate_start_address_uniqueness(
     Ok(())
 }
 
-fn load_indirect_inputs(path: &str) -> anyhow::Result<Vec<String>> {
+fn load_indirect_inputs(path: &Path) -> anyhow::Result<Vec<String>> {
     let text = std::fs::read_to_string(path)
-        .map_err(|_| anyhow::anyhow!("ファイルがありません: {path}"))?;
+        .map_err(|_| anyhow::anyhow!("ファイルがありません: {}", path.display()))?;
     Ok(text
         .split_whitespace()
         .map(std::string::ToString::to_string)
         .collect::<Vec<_>>())
 }
 
-fn resolve_lib_inputs(args: &Args) -> anyhow::Result<Vec<String>> {
-    let mut out = Vec::<String>::new();
+fn resolve_lib_inputs(args: &Args) -> anyhow::Result<Vec<PathBuf>> {
+    let mut out = Vec::<PathBuf>::new();
     if args.libs.is_empty() && !args.use_env_lib {
         return Ok(out);
     }
@@ -238,7 +242,7 @@ fn resolve_lib_inputs(args: &Args) -> anyhow::Result<Vec<String>> {
         let Some(path) = resolved else {
             anyhow::bail!("ファイルがありません: {file}");
         };
-        out.push(path.to_string_lossy().to_string());
+        out.push(path);
     }
     Ok(out)
 }
@@ -1143,7 +1147,7 @@ mod tests {
         };
         let libs = resolve_lib_inputs(&args).expect("resolve");
         assert_eq!(libs.len(), 1);
-        assert_eq!(libs[0], lib.to_string_lossy());
+        assert_eq!(libs[0], lib);
         let _ = fs::remove_file(lib);
         let _ = fs::remove_dir(dir);
     }

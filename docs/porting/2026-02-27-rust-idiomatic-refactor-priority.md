@@ -208,6 +208,8 @@
 - P1-2: 着手（第一段）
   - `linker.rs` の `resolve_map_output` を `Option<&String>` から `Option<&str>` へ移行し、呼び出し側を `as_deref()` ベースに更新。
   - 文字列所有を要求しない API 形に寄せ、`Path/PathBuf` 中心化の前段整理を実施。
+  - `load_indirect_inputs` を `&Path` 引数へ変更し、エラー文言も `path.display()` で統一。
+  - `resolve_lib_inputs` の戻り値を `Vec<PathBuf>` に変更し、`expand_inputs` 側で最終段だけ文字列化する構成へ整理。
 
 検証:
 - `cargo test -q --manifest-path Rhlk/Cargo.toml`: pass
