@@ -92,14 +92,59 @@ fn load_objects_with_requests(
                 .unwrap_or_else(|| path.to_str().unwrap_or("<non-utf8>"));
             anyhow::anyhow!("ファイルがありません: {name}")
         })?;
-        let object = match parse_object(&bytes) {
-            Ok(v) => v,
-            Err(FormatError::UnsupportedCommand(_)) if is_archive_like(&path) => {
-                let name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_else(|| path.to_str().unwrap_or("<non-utf8>"));
-                anyhow::bail!("archive/lib input is not supported yet: {name}");
+        match parse_object(&bytes) {
+            Ok(object) => {
+                let command_count = object.commands.len();
+                let summary = resolve_object(&object);
+
+                if verbose {
+                    let label = path.to_string_lossy();
+                    println!("parsed {label}: {command_count} commands");
+                    println!(
+                        "  align={} sections: declared={} observed={} symbols={} xrefs={} requests={}",
+                        summary.object_align,
+                        summary.declared_section_sizes.len(),
+                        summary.observed_section_usage.len(),
+                        summary.symbols.len(),
+                        summary.xrefs.len(),
+                        summary.requests.len()
+                    );
+                }
+
+                let base_dir = abs.parent().unwrap_or(Path::new("."));
+                enqueue_requests(&mut pending, base_dir, &summary.requests)?;
+                objects.push(object);
+                summaries.push(summary);
+                input_names.push(path.to_string_lossy().to_string());
+            }
+            Err(FormatError::UnsupportedCommand(_)) if is_archive_like(&path) && is_ar_archive(&bytes) => {
+                let members = parse_ar_members(&bytes)?;
+                if members.is_empty() {
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or_else(|| path.to_str().unwrap_or("<non-utf8>"));
+                    anyhow::bail!("archive has no members: {name}");
+                }
+                let base_dir = abs.parent().unwrap_or(Path::new("."));
+                for (member_name, payload) in members {
+                    let object = parse_object(&payload).map_err(|e| {
+                        anyhow::anyhow!("{}({}): {}", path.to_string_lossy(), member_name, e)
+                    })?;
+                    let summary = resolve_object(&object);
+                    if verbose {
+                        println!(
+                            "parsed {}({}): {} commands",
+                            path.to_string_lossy(),
+                            member_name,
+                            object.commands.len()
+                        );
+                    }
+                    enqueue_requests(&mut pending, base_dir, &summary.requests)?;
+                    objects.push(object);
+                    summaries.push(summary);
+                    input_names.push(format!("{}({})", path.to_string_lossy(), member_name));
+                }
             }
             Err(e) => {
                 let name = path
@@ -108,39 +153,24 @@ fn load_objects_with_requests(
                     .unwrap_or_else(|| path.to_str().unwrap_or("<non-utf8>"));
                 anyhow::bail!("{name}: {e}");
             }
-        };
-        let command_count = object.commands.len();
-        let summary = resolve_object(&object);
-
-        if verbose {
-            let label = path.to_string_lossy();
-            println!("parsed {label}: {command_count} commands");
-            println!(
-                "  align={} sections: declared={} observed={} symbols={} xrefs={} requests={}",
-                summary.object_align,
-                summary.declared_section_sizes.len(),
-                summary.observed_section_usage.len(),
-                summary.symbols.len(),
-                summary.xrefs.len(),
-                summary.requests.len()
-            );
         }
-
-        let base_dir = abs.parent().unwrap_or(Path::new("."));
-        for req in &summary.requests {
-            let req_name = String::from_utf8_lossy(req).to_string();
-            let req_path = resolve_requested_path(base_dir, &req_name).ok_or_else(|| {
-                anyhow::anyhow!("ファイルがありません: {}", req_name)
-            })?;
-            pending.push_back(req_path);
-        }
-
-        objects.push(object);
-        summaries.push(summary);
-        input_names.push(path.to_string_lossy().to_string());
     }
 
     Ok((objects, summaries, input_names))
+}
+
+fn enqueue_requests(
+    pending: &mut VecDeque<PathBuf>,
+    base_dir: &Path,
+    requests: &[Vec<u8>],
+) -> anyhow::Result<()> {
+    for req in requests {
+        let req_name = String::from_utf8_lossy(req).to_string();
+        let req_path = resolve_requested_path(base_dir, &req_name)
+            .ok_or_else(|| anyhow::anyhow!("ファイルがありません: {}", req_name))?;
+        pending.push_back(req_path);
+    }
+    Ok(())
 }
 
 fn resolve_requested_path(base_dir: &Path, req_name: &str) -> Option<PathBuf> {
@@ -195,11 +225,92 @@ fn is_archive_like(path: &Path) -> bool {
     ext.eq_ignore_ascii_case("a") || ext.eq_ignore_ascii_case("lib")
 }
 
+fn is_ar_archive(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"!<arch>\n")
+}
+
+fn parse_ar_members(bytes: &[u8]) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+    if !is_ar_archive(bytes) {
+        anyhow::bail!("not ar archive");
+    }
+    let mut out = Vec::new();
+    let mut pos = 8usize;
+    while pos < bytes.len() {
+        if bytes.len().saturating_sub(pos) < 60 {
+            anyhow::bail!("invalid ar header");
+        }
+        let hdr = &bytes[pos..pos + 60];
+        pos += 60;
+        if &hdr[58..60] != b"`\n" {
+            anyhow::bail!("invalid ar header magic");
+        }
+        let size_str = std::str::from_utf8(&hdr[48..58])?.trim();
+        let size = size_str.parse::<usize>()?;
+        if bytes.len().saturating_sub(pos) < size {
+            anyhow::bail!("invalid ar member size");
+        }
+        let mut raw_name = std::str::from_utf8(&hdr[0..16])?.trim().to_string();
+        let mut data = bytes[pos..pos + size].to_vec();
+        pos += size;
+        if pos % 2 == 1 {
+            pos = pos.saturating_add(1);
+        }
+
+        if raw_name == "/" || raw_name == "//" {
+            continue;
+        }
+        if raw_name.ends_with('/') {
+            raw_name.pop();
+        }
+        if let Some(rest) = raw_name.strip_prefix("#1/") {
+            let n = rest.parse::<usize>()?;
+            if data.len() < n {
+                anyhow::bail!("invalid BSD ar extended name");
+            }
+            let name = String::from_utf8_lossy(&data[..n]).to_string();
+            data = data[n..].to_vec();
+            out.push((name, data));
+            continue;
+        }
+        if raw_name.starts_with('/') {
+            // GNU long-name table references are not supported yet.
+            continue;
+        }
+        out.push((raw_name, data));
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::load_objects_with_requests;
+    use super::{is_ar_archive, load_objects_with_requests, parse_ar_members};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn make_simple_ar(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"!<arch>\n");
+        for (name, data) in entries {
+            let mut name_field = format!("{name}/");
+            if name_field.len() > 16 {
+                name_field.truncate(16);
+            }
+            while name_field.len() < 16 {
+                name_field.push(' ');
+            }
+            let mut size_field = data.len().to_string();
+            while size_field.len() < 10 {
+                size_field.insert(0, ' ');
+            }
+            let header = format!("{name_field}{:>12}{:>6}{:>6}{:>8}{size_field}`\n", 0, 0, 0, 0);
+            out.extend_from_slice(header.as_bytes());
+            out.extend_from_slice(data);
+            if data.len() % 2 == 1 {
+                out.push(b'\n');
+            }
+        }
+        out
+    }
 
     #[test]
     fn loads_requested_object_from_same_directory() {
@@ -276,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_archive_request_as_not_supported() {
+    fn loads_archive_members() {
         let uniq = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time")
@@ -287,15 +398,29 @@ mod tests {
         let main = dir.join("main.o");
         let lib = dir.join("libx.a");
         fs::write(&main, [0xe0, 0x01, b'l', b'i', b'b', b'x', b'.', b'a', 0x00, 0x00]).expect("write main");
-        // minimal ar magic so parse_object fails with unsupported command
-        fs::write(&lib, b"!<arch>\n").expect("write lib");
+        let ar = make_simple_ar(&[("a.o", &[0x00, 0x00]), ("b.o", &[0x00, 0x00])]);
+        fs::write(&lib, ar).expect("write lib");
 
         let inputs = vec![main.to_string_lossy().to_string()];
-        let err = load_objects_with_requests(&inputs, false).expect_err("must fail");
-        assert!(err.to_string().contains("archive/lib input is not supported yet: libx.a"));
+        let (_, _, names) = load_objects_with_requests(&inputs, false).expect("must load");
+        assert_eq!(names.len(), 3);
+        assert!(names.iter().any(|v| v.ends_with("libx.a(a.o)")));
+        assert!(names.iter().any(|v| v.ends_with("libx.a(b.o)")));
 
         let _ = fs::remove_file(main);
         let _ = fs::remove_file(lib);
         let _ = fs::remove_dir(dir);
+    }
+
+    #[test]
+    fn parses_simple_ar_members() {
+        let ar = make_simple_ar(&[("x.o", &[0x00, 0x00]), ("y.o", &[0x10, 0x00, 0x00, 0x00])]);
+        assert!(is_ar_archive(&ar));
+        let members = parse_ar_members(&ar).expect("parse");
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].0, "x.o");
+        assert_eq!(members[0].1, vec![0x00, 0x00]);
+        assert_eq!(members[1].0, "y.o");
+        assert_eq!(members[1].1, vec![0x10, 0x00, 0x00, 0x00]);
     }
 }
