@@ -4,6 +4,9 @@
 Rhlk のテストを、ローカル環境で再現可能な形で実行するための手順をまとめる。
 
 ## テストの種類
+- 総合品質ゲート（推奨）
+  - 対象: `clippy` + Rust test + HLK 互換回帰を連続実行
+  - 実行: `./tools/run_quality_gate.sh`
 - Rust unit/integration test
   - 対象: `Rhlk/src/*` の unit test、`Rhlk/tests/*` の integration test
   - 実行: `cargo test`
@@ -47,12 +50,24 @@ cmake --build external/run68x/build
 - `external/toolchain/bin/u8tosj.r`
 
 ## テスト実行手順（推奨順）
-1. Rust テスト
+1. 総合品質ゲート（推奨）
+```bash
+./tools/run_quality_gate.sh
+```
+
+2. 個別実行（必要時）
+
+2.1 `clippy`
+```bash
+cargo clippy --manifest-path Rhlk/Cargo.toml --all-targets --all-features -- -W clippy::all -W clippy::pedantic
+```
+
+2.2 Rust テスト
 ```bash
 cargo test -q --manifest-path Rhlk/Cargo.toml
 ```
 
-2. HLK 互換回帰
+2.3 HLK 互換回帰
 ```bash
 ./tools/run_hlkx_regression.sh
 ```

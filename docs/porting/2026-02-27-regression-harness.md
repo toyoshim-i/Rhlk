@@ -20,6 +20,7 @@
 
 ## 追加ファイル
 - `tools/run_hlkx_regression.sh`
+- `tools/run_quality_gate.sh`
 - `tests/compat/hlkx_cases.tsv`
 
 ## 前提
@@ -65,6 +66,12 @@ cmake --build external/run68x/build
 `has060.x` がアーカイブ配布の場合は、別途 `lhasa` などで展開して配置する。
 
 ## 実行方法
+品質ゲート（`clippy` + `cargo test` + 回帰）をまとめて回す:
+
+```bash
+./tools/run_quality_gate.sh
+```
+
 デフォルト設定のまま:
 
 ```bash
