@@ -21,6 +21,8 @@
 ## 追加ファイル
 - `tools/run_hlkx_regression.sh`
 - `tools/run_quality_gate.sh`
+- `tools/lib/regression_normalize.sh`
+- `tools/lib/regression_case.sh`
 - `tests/compat/hlkx_cases.tsv`
 
 ## 前提
