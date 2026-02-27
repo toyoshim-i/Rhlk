@@ -1307,6 +1307,12 @@ fn patch_opaque_commands(
                 Command::Opaque { code, payload } => {
                     let hi = (*code >> 8) as u8;
                     let lo = *code as u8;
+                    if matches!(hi, 0x4c | 0x4d) {
+                        bail!(
+                            "ctor/dtor command is not supported yet: {:#06x}",
+                            code
+                        );
+                    }
                     if hi == 0x80 {
                         if let Some(entry) =
                             evaluate_push_80_for_patch(lo, payload, summary, global_symbol_addrs)
@@ -2796,6 +2802,29 @@ mod tests {
         let err =
             validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)]).expect_err("must reject expression command");
         assert!(err.to_string().contains("不正な式"));
+    }
+
+    #[test]
+    fn rejects_unimplemented_ctor_dtor_commands() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 0,
+                    name: b"text".to_vec(),
+                },
+                Command::Opaque {
+                    code: 0x4c01,
+                    payload: vec![0, 0, 0, 0],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 0, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let err = build_x_image(&[obj], &[sum], &layout).expect_err("must reject ctor/dtor command");
+        assert!(err.to_string().contains("ctor/dtor command is not supported yet"));
     }
 
     #[test]
