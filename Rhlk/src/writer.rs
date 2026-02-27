@@ -1188,16 +1188,43 @@ fn collect_object_relocations(
 fn opaque_write_size(code: u16) -> u8 {
     let hi = code_hi(code);
     match hi {
-        0x40 | 0x50 | opcode::OPH_WRT_STK_BYTE => 2,
-        0x43 | 0x53 | 0x57 | 0x6b | opcode::OPH_WRT_STK_BYTE_RAW => 1,
-        0x41 | 0x45 | 0x51 | 0x55 | 0x65 | 0x69 | opcode::OPH_WRT_STK_WORD_TEXT | opcode::OPH_WRT_STK_WORD_RELOC => 2,
-        0x42 | 0x46 | 0x52 | 0x56 | 0x6a | opcode::OPH_WRT_STK_LONG | opcode::OPH_WRT_STK_LONG_ALT | opcode::OPH_WRT_STK_LONG_RELOC => 4,
+        opcode::OPH_ABS_WORD
+        | opcode::OPH_ADD_WORD
+        | opcode::OPH_WRT_STK_BYTE
+        | 0x41
+        | opcode::OPH_XREF_WORD
+        | 0x51
+        | opcode::OPH_ADD_XREF_WORD
+        | opcode::OPH_DISP_WORD
+        | opcode::OPH_DISP_WORD_ALIAS
+        | opcode::OPH_WRT_STK_WORD_TEXT
+        | opcode::OPH_WRT_STK_WORD_RELOC => 2,
+        opcode::OPH_ABS_BYTE
+        | opcode::OPH_ADD_BYTE
+        | opcode::OPH_ADD_XREF_BYTE
+        | opcode::OPH_DISP_BYTE
+        | opcode::OPH_WRT_STK_BYTE_RAW => 1,
+        opcode::OPH_ABS_LONG
+        | opcode::OPH_XREF_LONG
+        | opcode::OPH_ADD_LONG
+        | opcode::OPH_ADD_XREF_LONG
+        | opcode::OPH_DISP_LONG
+        | opcode::OPH_WRT_STK_LONG
+        | opcode::OPH_WRT_STK_LONG_ALT
+        | opcode::OPH_WRT_STK_LONG_RELOC => 4,
         _ => 0,
     }
 }
 
 fn needs_relocation(code: u16) -> bool {
-    matches!(code_hi(code), 0x42 | 0x46 | 0x52 | 0x56 | 0x6a)
+    matches!(
+        code_hi(code),
+        opcode::OPH_ABS_LONG
+            | opcode::OPH_XREF_LONG
+            | opcode::OPH_ADD_LONG
+            | opcode::OPH_ADD_XREF_LONG
+            | opcode::OPH_DISP_LONG
+    )
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1310,13 +1337,13 @@ fn patch_opaque_commands(
                 return;
             };
             let [hi, lo] = code.to_be_bytes();
-            if hi == 0x80 {
+            if hi == opcode::OPH_PUSH_VALUE_BASE {
                 if let Some(entry) =
                     evaluate_push_80_for_patch(lo, payload, summary, global_symbol_addrs)
                 {
                     calc_stack.push(entry);
                 }
-            } else if hi == 0xa0 {
+            } else if hi == opcode::OPH_EXPR_BASE {
                 let _ = expr::evaluate_a0(lo, calc_stack);
             }
             if let Some(bytes) =
@@ -1415,10 +1442,23 @@ fn materialize_opaque(
     let hi = code_hi(code);
     let value = resolve_opaque_value(code, payload, summary, global_symbol_addrs, placement)?;
     match hi {
-        0x40 | 0x50 => Some(vec![0x00, i32_low_u8(value)]),
-        0x43 | 0x47 | 0x53 | 0x57 | 0x6b => Some(vec![i32_low_u8(value)]),
-        0x41 | 0x45 | 0x51 | 0x55 | 0x65 | 0x69 => Some(i32_low_u16(value).to_be_bytes().to_vec()),
-        0x42 | 0x46 | 0x52 | 0x56 | 0x6a => Some(i32_bits_to_u32(value).to_be_bytes().to_vec()),
+        opcode::OPH_ABS_WORD | opcode::OPH_ADD_WORD => Some(vec![0x00, i32_low_u8(value)]),
+        opcode::OPH_ABS_BYTE
+        | opcode::OPH_XREF_BYTE
+        | opcode::OPH_ADD_BYTE
+        | opcode::OPH_ADD_XREF_BYTE
+        | opcode::OPH_DISP_BYTE => Some(vec![i32_low_u8(value)]),
+        0x41
+        | opcode::OPH_XREF_WORD
+        | 0x51
+        | opcode::OPH_ADD_XREF_WORD
+        | opcode::OPH_DISP_WORD
+        | opcode::OPH_DISP_WORD_ALIAS => Some(i32_low_u16(value).to_be_bytes().to_vec()),
+        opcode::OPH_ABS_LONG
+        | opcode::OPH_XREF_LONG
+        | opcode::OPH_ADD_LONG
+        | opcode::OPH_ADD_XREF_LONG
+        | opcode::OPH_DISP_LONG => Some(i32_bits_to_u32(value).to_be_bytes().to_vec()),
         _ => None,
     }
 }
@@ -1433,7 +1473,13 @@ fn resolve_opaque_value(
     let hi = code_hi(code);
     let lo = code_lo(code);
 
-    if matches!(hi, 0x65 | 0x69 | 0x6a | 0x6b) {
+    if matches!(
+        hi,
+        opcode::OPH_DISP_WORD
+            | opcode::OPH_DISP_WORD_ALIAS
+            | opcode::OPH_DISP_LONG
+            | opcode::OPH_DISP_BYTE
+    ) {
         let adr = read_i32_be(payload)?;
         let label_no = read_u16_be(payload.get(4..)?)?;
         let xref = summary.xrefs.iter().find(|x| x.value == u32::from(label_no))?;
@@ -1457,7 +1503,16 @@ fn resolve_opaque_value(
         return None;
     };
 
-    if matches!(hi, 0x50 | 0x51 | 0x52 | 0x53 | 0x55 | 0x56 | 0x57) {
+    if matches!(
+        hi,
+        opcode::OPH_ADD_WORD
+            | 0x51
+            | opcode::OPH_ADD_LONG
+            | opcode::OPH_ADD_BYTE
+            | opcode::OPH_ADD_XREF_WORD
+            | opcode::OPH_ADD_XREF_LONG
+            | opcode::OPH_ADD_XREF_BYTE
+    ) {
         let off_pos = if matches!(lo, 0xfc..=0xff) { 2 } else { 4 };
         let off = read_i32_be(payload.get(off_pos..)?)?;
         base = base.wrapping_add(off);

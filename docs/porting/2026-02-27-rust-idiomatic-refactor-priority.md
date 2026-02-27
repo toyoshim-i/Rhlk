@@ -202,6 +202,9 @@
 - P3-3: 完了
   - `format/obj.rs` の opaque opcode 判定分岐を整理し、重複 arm を統合。
   - `is_label_section` を range pattern 化、`align_even` を `is_multiple_of` ベースへ更新。
+- P2-2: 着手（第一段）
+  - `writer/opcode.rs` に opaque command の主要 code/分類定数を追加。
+  - `writer.rs` の `opaque_write_size` / `needs_relocation` / `materialize_opaque` / `resolve_opaque_value` でマジックナンバーを定数参照へ置換。
 - P1-3: 着手（第一段）
   - `writer.rs` の `collect_object_relocations` を共通 walker (`walk_opaque_commands`) へ寄せ、section/cursor 走査の重複実装を削減。
   - walker を `walk_commands` に拡張し、`validate_unsupported_expression_commands` の header 事前走査を統合（command 1-pass 化）。
