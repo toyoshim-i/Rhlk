@@ -129,25 +129,7 @@ pub fn write_output(
         let bss_extra = if matches!(options.bss_policy, BssPolicy::Omit) {
             0
         } else {
-            layout
-                .total_size_by_section
-                .get(&SectionKind::Bss)
-                .copied()
-                .unwrap_or(0)
-                .saturating_add(
-                    layout
-                        .total_size_by_section
-                        .get(&SectionKind::Common)
-                        .copied()
-                        .unwrap_or(0),
-                )
-                .saturating_add(
-                    layout
-                        .total_size_by_section
-                        .get(&SectionKind::Stack)
-                        .copied()
-                        .unwrap_or(0),
-                )
+            bss_common_stack_total(layout)
         };
         patch_mcs_size(&mut payload, bss_extra).map_err(|_| {
             anyhow::anyhow!(
@@ -235,6 +217,12 @@ fn apply_x_header_options(payload: &mut [u8], base_address: u32, load_mode: u8) 
 
 fn section_total(layout: &LayoutPlan, section: SectionKind) -> u32 {
     layout.total_size_by_section.get(&section).copied().unwrap_or(0)
+}
+
+fn bss_common_stack_total(layout: &LayoutPlan) -> u32 {
+    section_total(layout, SectionKind::Bss)
+        .saturating_add(section_total(layout, SectionKind::Common))
+        .saturating_add(section_total(layout, SectionKind::Stack))
 }
 
 fn section_tag(section: SectionKind) -> &'static str {
@@ -912,22 +900,7 @@ fn build_r_payload(
     }
 
     if !omit_bss {
-        let bss = layout
-            .total_size_by_section
-            .get(&SectionKind::Bss)
-            .copied()
-            .unwrap_or(0);
-        let common = layout
-            .total_size_by_section
-            .get(&SectionKind::Common)
-            .copied()
-            .unwrap_or(0);
-        let stack = layout
-            .total_size_by_section
-            .get(&SectionKind::Stack)
-            .copied()
-            .unwrap_or(0);
-        let total = bss.saturating_add(common).saturating_add(stack) as usize;
+        let total = usize::try_from(bss_common_stack_total(layout)).unwrap_or(usize::MAX);
         payload.resize(payload.len() + total, 0);
     }
 
@@ -1126,30 +1099,7 @@ fn validate_r_convertibility(
         );
     }
 
-    let data_size = layout
-        .total_size_by_section
-        .get(&SectionKind::Data)
-        .copied()
-        .unwrap_or(0);
-    let bss_size = layout
-        .total_size_by_section
-        .get(&SectionKind::Bss)
-        .copied()
-        .unwrap_or(0)
-        .saturating_add(
-            layout
-                .total_size_by_section
-                .get(&SectionKind::Common)
-                .copied()
-                .unwrap_or(0),
-        )
-        .saturating_add(
-            layout
-                .total_size_by_section
-                .get(&SectionKind::Stack)
-                .copied()
-                .unwrap_or(0),
-        );
+    let bss_size = bss_common_stack_total(layout);
     let exec = resolve_exec_address(summaries, text_size, data_size, bss_size)?.unwrap_or(0);
     if exec != 0 {
         bail!(
