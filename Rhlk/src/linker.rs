@@ -432,6 +432,19 @@ mod tests {
         out
     }
 
+    fn obj_with_def_and_xref(def: &str, xref: &str) -> Vec<u8> {
+        let mut out = obj_with_def(def);
+        out.truncate(out.len().saturating_sub(2)); // remove end
+        out.extend_from_slice(&[0xb2, 0xff, 0x00, 0x00, 0x00, 0x01]);
+        out.extend_from_slice(xref.as_bytes());
+        out.push(0x00);
+        if out.len() % 2 == 1 {
+            out.push(0x00);
+        }
+        out.extend_from_slice(&[0x00, 0x00]);
+        out
+    }
+
     fn make_gnu_longname_ar(long_name: &str, payload: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(b"!<arch>\n");
@@ -609,5 +622,24 @@ mod tests {
         ];
         let picked = select_archive_members(&[main_sum], &members);
         assert_eq!(picked, vec![0]);
+    }
+
+    #[test]
+    fn selects_archive_members_with_dependency_chain() {
+        let main_bytes = obj_with_xref_and_request("foo", "libx.a");
+        let main = parse_object(&main_bytes).expect("main parse");
+        let main_sum = resolve_object(&main);
+
+        let foo_obj = parse_object(&obj_with_def_and_xref("foo", "bar")).expect("foo parse");
+        let foo_sum = resolve_object(&foo_obj);
+        let bar_obj = parse_object(&obj_with_def("bar")).expect("bar parse");
+        let bar_sum = resolve_object(&bar_obj);
+
+        let members = vec![
+            ("foo.o".to_string(), foo_obj, foo_sum),
+            ("bar.o".to_string(), bar_obj, bar_sum),
+        ];
+        let picked = select_archive_members(&[main_sum], &members);
+        assert_eq!(picked, vec![0, 1]);
     }
 }
