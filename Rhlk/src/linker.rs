@@ -1,6 +1,6 @@
 use crate::cli::Args;
 use crate::format::FormatError;
-use crate::format::obj::parse_object;
+use crate::format::obj::{Command, ObjectFile, parse_object};
 use crate::layout::plan_layout;
 use crate::resolver::resolve_object;
 use crate::resolver::ObjectSummary;
@@ -21,7 +21,13 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         }
     }
 
-    let (objects, mut summaries, input_names) = load_objects_with_requests(&args.inputs, args.verbose)?;
+    let (objects, summaries, input_names) = load_objects_with_requests(&args.inputs, args.verbose)?;
+    let mut objects = objects;
+    let mut summaries = summaries;
+    let mut input_names = input_names;
+    if !args.defines.is_empty() {
+        inject_define_symbols(&args, &mut objects, &mut summaries, &mut input_names);
+    }
     if let Some(align) = args.align {
         for s in &mut summaries {
             // Apply global default align only to objects that still have the default value.
@@ -69,6 +75,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         args.make_mcs,
         args.cut_symbols,
         args.base_address.unwrap_or(0),
+        args.load_mode.unwrap_or(0),
         &objects,
         &input_names,
         &summaries,
@@ -88,6 +95,31 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         println!("rhlk: parsed {} input file(s)", input_names.len());
     }
     Ok(())
+}
+
+fn inject_define_symbols(
+    args: &Args,
+    objects: &mut Vec<ObjectFile>,
+    summaries: &mut Vec<ObjectSummary>,
+    input_names: &mut Vec<String>,
+) {
+    let mut commands = Vec::new();
+    for def in &args.defines {
+        commands.push(Command::DefineSymbol {
+            section: 0x00,
+            value: def.value,
+            name: def.name.as_bytes().to_vec(),
+        });
+    }
+    commands.push(Command::End);
+    let obj = ObjectFile {
+        commands,
+        scd_tail: Vec::new(),
+    };
+    let sum = resolve_object(&obj);
+    objects.push(obj);
+    summaries.push(sum);
+    input_names.push("*DEFINE*".to_string());
 }
 
 fn resolve_output_path(args: &Args, inputs: &[String]) -> String {
@@ -522,10 +554,10 @@ fn resolve_gnu_long_name(table: Option<&[u8]>, offset: usize) -> Option<String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        is_ar_archive, load_objects_with_requests, parse_ar_members, resolve_map_output, resolve_output_path, run,
-        select_archive_members, validate_unresolved_symbols,
+        inject_define_symbols, is_ar_archive, load_objects_with_requests, parse_ar_members, resolve_map_output,
+        resolve_output_path, run, select_archive_members, validate_unresolved_symbols,
     };
-    use crate::cli::Args;
+    use crate::cli::{Args, DefineArg};
     use crate::format::obj::parse_object;
     use crate::resolver::resolve_object;
     use std::fs;
@@ -992,6 +1024,8 @@ mod tests {
             opt_an: false,
             align: None,
             base_address: None,
+            load_mode: None,
+            defines: Vec::new(),
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
@@ -1040,6 +1074,8 @@ mod tests {
             opt_an: false,
             align: None,
             base_address: None,
+            load_mode: None,
+            defines: Vec::new(),
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
@@ -1079,6 +1115,8 @@ mod tests {
             opt_an: false,
             align: None,
             base_address: None,
+            load_mode: None,
+            defines: Vec::new(),
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
@@ -1108,6 +1146,8 @@ mod tests {
             opt_an: false,
             align: Some(3),
             base_address: None,
+            load_mode: None,
+            defines: Vec::new(),
             make_mcs: false,
             omit_bss: false,
             cut_symbols: false,
@@ -1121,5 +1161,43 @@ mod tests {
         };
         let err = run(args).expect_err("must reject invalid align");
         assert!(err.to_string().contains("align size must be power of two"));
+    }
+
+    #[test]
+    fn injects_define_symbols_as_absolute_xdef() {
+        let args = Args {
+            output: None,
+            r_format: false,
+            r_no_check: false,
+            no_x_ext: false,
+            opt_an: false,
+            align: None,
+            base_address: None,
+            load_mode: None,
+            defines: vec![DefineArg {
+                name: "_FOO".to_string(),
+                value: 0x1234,
+            }],
+            make_mcs: false,
+            omit_bss: false,
+            cut_symbols: false,
+            map: None,
+            verbose: false,
+            quiet: false,
+            warn_off: false,
+            title: false,
+            section_info: false,
+            inputs: vec!["in.o".to_string()],
+        };
+        let mut objects = Vec::new();
+        let mut summaries = Vec::new();
+        let mut names = Vec::new();
+        inject_define_symbols(&args, &mut objects, &mut summaries, &mut names);
+        assert_eq!(objects.len(), 1);
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(names, vec!["*DEFINE*"]);
+        assert_eq!(summaries[0].symbols.len(), 1);
+        assert_eq!(summaries[0].symbols[0].name, b"_FOO".to_vec());
+        assert_eq!(summaries[0].symbols[0].value, 0x1234);
     }
 }

@@ -1,5 +1,11 @@
 use clap::Parser;
 
+#[derive(Debug, Clone)]
+pub struct DefineArg {
+    pub name: String,
+    pub value: u32,
+}
+
 fn parse_u32_with_hex(input: &str) -> Result<u32, String> {
     let s = input.trim();
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -8,6 +14,29 @@ fn parse_u32_with_hex(input: &str) -> Result<u32, String> {
         s.parse::<u32>()
             .map_err(|e| format!("invalid decimal value '{input}': {e}"))
     }
+}
+
+fn parse_load_mode(input: &str) -> Result<u8, String> {
+    let v = parse_u32_with_hex(input)?;
+    if v > 2 {
+        return Err(format!("load mode must be 0..2: {input}"));
+    }
+    Ok(v as u8)
+}
+
+fn parse_define_arg(input: &str) -> Result<DefineArg, String> {
+    let (name_raw, value_raw) = input
+        .split_once('=')
+        .ok_or_else(|| format!("define format must be NAME=VALUE: {input}"))?;
+    let name = name_raw.trim();
+    if name.is_empty() {
+        return Err(format!("define name is empty: {input}"));
+    }
+    let value = parse_u32_with_hex(value_raw.trim())?;
+    Ok(DefineArg {
+        name: name.to_string(),
+        value,
+    })
 }
 
 #[derive(Debug, Parser)]
@@ -33,6 +62,12 @@ pub struct Args {
 
     #[arg(short = 'b', value_parser = parse_u32_with_hex)]
     pub base_address: Option<u32>,
+
+    #[arg(short = 'g', value_parser = parse_load_mode)]
+    pub load_mode: Option<u8>,
+
+    #[arg(short = 'd', value_parser = parse_define_arg)]
+    pub defines: Vec<DefineArg>,
 
     #[arg(long = "makemcs")]
     pub make_mcs: bool,
