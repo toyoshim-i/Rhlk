@@ -33,8 +33,9 @@
 - run68 回帰:
   - 追加: `a0_neg/a0_not/a0_high/a0_low/a0_highw/a0_loww`
   - 追加: `a0_attr_neg`（text属性シンボルでのエラー系）
+  - 追加: `a0_attr_add/a0_attr_sub`（text属性シンボル + 定数の二項演算）
 - 未カバー:
-  - 非定数属性を含む `a0` 演算のHLK同値比較（symbol/section属性差）
+  - 非定数属性同士の `a0` 二項演算（例: symbol +/- symbol）のHLK同値比較
 
 ### 90/91/92/93/96/99/9a stack write
 - 実装: あり（underflow診断は `90/91/92/93/96/99/9a`）

@@ -26,3 +26,5 @@ stk96_unary	-	stk96_main.o a0_label.o	x
 stk99_unary	-	stk99_main.o a0_label.o	x
 stk9a_unary	-	stk9a_main.o a0_label.o	x
 a0_attr_neg	-	a0_attr_main.o a0_text_label.o	x
+a0_attr_add	-	a0_attr_add_main.o a0_text_label.o	x
+a0_attr_sub	-	a0_attr_sub_main.o a0_text_label.o	x

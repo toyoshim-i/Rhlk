@@ -114,6 +114,22 @@ ASM
   (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_attr_main.o a0_attr_main.s >/dev/null 2>/dev/null)
   cp "${tmp}/a0_attr_main.o" "${OUT_DIR}/a0_attr_main.o"
 
+  cat > "${tmp}/a0_attr_add_main.s" <<'ASM'
+.xref label
+.dc.l label+1
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_attr_add_main.o a0_attr_add_main.s >/dev/null 2>/dev/null)
+  cp "${tmp}/a0_attr_add_main.o" "${OUT_DIR}/a0_attr_add_main.o"
+
+  cat > "${tmp}/a0_attr_sub_main.s" <<'ASM'
+.xref label
+.dc.l label-1
+.end
+ASM
+  (cd "${tmp}" && "${HAS_ARR[@]}" -o a0_attr_sub_main.o a0_attr_sub_main.s >/dev/null 2>/dev/null)
+  cp "${tmp}/a0_attr_sub_main.o" "${OUT_DIR}/a0_attr_sub_main.o"
+
   cat > "${tmp}/stk91_main.s" <<'ASM'
 .xref label
 .dc.w .neg.label
