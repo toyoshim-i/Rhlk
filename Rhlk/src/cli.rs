@@ -18,6 +18,9 @@ pub struct Args {
     #[arg(long = "omit-bss")]
     pub omit_bss: bool,
 
+    #[arg(short = 'x')]
+    pub cut_symbols: bool,
+
     #[arg(short = 'p', long = "map", num_args = 0..=1, default_missing_value = "")]
     pub map: Option<String>,
 

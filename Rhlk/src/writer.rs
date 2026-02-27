@@ -13,6 +13,7 @@ pub fn write_output(
     r_no_check: bool,
     omit_bss: bool,
     make_mcs: bool,
+    cut_symbols: bool,
     objects: &[ObjectFile],
     input_paths: &[String],
     summaries: &[ObjectSummary],
@@ -27,7 +28,7 @@ pub fn write_output(
     let mut payload = if r_format {
         build_r_payload(objects, summaries, layout, omit_bss)?
     } else {
-        build_x_image(objects, summaries, layout).map_err(|err| {
+        build_x_image_with_options(objects, summaries, layout, !cut_symbols).map_err(|err| {
             let text = err.to_string();
             if text.contains("relocation target address is odd") {
                 anyhow::anyhow!(
@@ -368,10 +369,20 @@ fn section_tag(section: SectionKind) -> &'static str {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn build_x_image(
     objects: &[ObjectFile],
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
+) -> Result<Vec<u8>> {
+    build_x_image_with_options(objects, summaries, layout, true)
+}
+
+fn build_x_image_with_options(
+    objects: &[ObjectFile],
+    summaries: &[ObjectSummary],
+    layout: &LayoutPlan,
+    include_symbols: bool,
 ) -> Result<Vec<u8>> {
     if objects.len() != summaries.len() || objects.len() != layout.placements.len() {
         bail!("internal mismatch: objects/summaries/layout length differs");
@@ -424,14 +435,18 @@ fn build_x_image(
     let text = linked.get(&SectionKind::Text).cloned().unwrap_or_default();
     let data = linked.get(&SectionKind::Data).cloned().unwrap_or_default();
 
-    let symbol_data = build_symbol_table(
-        summaries,
-        layout,
-        text_size,
-        data_size,
-        bss_only,
-        common_only,
-    );
+    let symbol_data = if include_symbols {
+        build_symbol_table(
+            summaries,
+            layout,
+            text_size,
+            data_size,
+            bss_only,
+            common_only,
+        )
+    } else {
+        Vec::new()
+    };
     let symbol_size = symbol_data.len() as u32;
     let reloc_table = build_relocation_table(objects, summaries, layout, text_size, &global_symbol_addrs)?;
     let reloc_size = reloc_table.len() as u32;
@@ -2332,7 +2347,7 @@ mod tests {
     use crate::layout::plan_layout;
     use crate::resolver::{ObjectSummary, SectionKind, Symbol};
     use crate::writer::{
-        build_map_text, build_r_payload, build_x_image, validate_link_inputs,
+        build_map_text, build_r_payload, build_x_image, build_x_image_with_options, validate_link_inputs,
         validate_r_convertibility,
     };
 
@@ -2476,6 +2491,49 @@ mod tests {
         assert_eq!(&image[36..40], &(4u32.to_be_bytes()));
         assert_eq!(&image[40..44], &(2u32.to_be_bytes()));
         assert_eq!(&image[64..68], &[0x01, 0x02, 0x11, 0x22]);
+    }
+
+    #[test]
+    fn cuts_symbol_table_with_x_option() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0x4e, 0x75]),
+                Command::DefineSymbol {
+                    section: 0x01,
+                    value: 0,
+                    name: b"_entry".to_vec(),
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut sum = mk_summary(2, 2, 0);
+        sum.symbols.push(Symbol {
+            name: b"_entry".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let with_symbols =
+            build_x_image_with_options(&[obj.clone()], &[sum.clone()], &layout, true).expect("x image");
+        let without_symbols = build_x_image_with_options(&[obj], &[sum], &layout, false).expect("x image");
+
+        let with_sym_size =
+            u32::from_be_bytes([with_symbols[28], with_symbols[29], with_symbols[30], with_symbols[31]]);
+        let without_sym_size = u32::from_be_bytes([
+            without_symbols[28],
+            without_symbols[29],
+            without_symbols[30],
+            without_symbols[31],
+        ]);
+        assert!(with_sym_size > 0);
+        assert_eq!(without_sym_size, 0);
     }
 
     #[test]
