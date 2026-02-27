@@ -129,15 +129,36 @@ fn load_objects_with_requests(
 fn resolve_requested_path(base_dir: &Path, req_name: &str) -> Option<PathBuf> {
     let req = Path::new(req_name);
     if req.is_absolute() {
-        return req.exists().then(|| req.to_path_buf());
+        if req.exists() {
+            return Some(req.to_path_buf());
+        }
+        for ext in ["o", "obj"] {
+            let c = req.with_extension(ext);
+            if c.exists() {
+                return Some(c);
+            }
+        }
+        return None;
     }
     let c1 = base_dir.join(req);
     if c1.exists() {
         return Some(c1);
     }
+    for ext in ["o", "obj"] {
+        let c = base_dir.join(req).with_extension(ext);
+        if c.exists() {
+            return Some(c);
+        }
+    }
     let c2 = PathBuf::from(req);
     if c2.exists() {
         return Some(c2);
+    }
+    for ext in ["o", "obj"] {
+        let c = PathBuf::from(req).with_extension(ext);
+        if c.exists() {
+            return Some(c);
+        }
     }
     None
 }
@@ -201,6 +222,32 @@ mod tests {
         assert!(err.to_string().contains("ファイルがありません: none.o"));
 
         let _ = fs::remove_file(main);
+        let _ = fs::remove_dir(dir);
+    }
+
+    #[test]
+    fn resolves_requested_object_with_o_extension() {
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rhlk-linker-test-{uniq}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+
+        let main = dir.join("main.o");
+        let sub = dir.join("sub.o");
+
+        // e001 "sub", 0000(end)
+        fs::write(&main, [0xe0, 0x01, b's', b'u', b'b', 0x00, 0x00, 0x00]).expect("write main");
+        fs::write(&sub, [0x00, 0x00]).expect("write sub");
+
+        let inputs = vec![main.to_string_lossy().to_string()];
+        let (_, _, names) = load_objects_with_requests(&inputs, false).expect("load");
+        assert_eq!(names.len(), 2);
+        assert!(names.iter().any(|v| v.ends_with("sub.o")));
+
+        let _ = fs::remove_file(main);
+        let _ = fs::remove_file(sub);
         let _ = fs::remove_dir(dir);
     }
 }
