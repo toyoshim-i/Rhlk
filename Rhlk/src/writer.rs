@@ -798,7 +798,7 @@ fn append_symbol_entry(out: &mut Vec<u8>, ty: u16, addr: u32, name: &[u8]) {
     out.extend_from_slice(&addr.to_be_bytes());
     out.extend_from_slice(name);
     out.push(0);
-    if out.len() % 2 != 0 {
+    if !out.len().is_multiple_of(2) {
         out.push(0);
     }
 }
@@ -1179,7 +1179,7 @@ fn compute_g2lk_synthetic_symbols(
         return None;
     }
     let mut doctor = false;
-    let mut dodtor = false;
+    let mut has_dodtor = false;
     let mut ctor_count = 0u32;
     let mut dtor_count = 0u32;
     for obj in objects {
@@ -1189,7 +1189,7 @@ fn compute_g2lk_synthetic_symbols(
             };
             match *code {
                 opcode::OP_DOCTOR => doctor = true,
-                opcode::OP_DODTOR => dodtor = true,
+                opcode::OP_DODTOR => has_dodtor = true,
                 opcode::OP_CTOR_ENTRY => ctor_count = ctor_count.saturating_add(1),
                 opcode::OP_DTOR_ENTRY => dtor_count = dtor_count.saturating_add(1),
                 _ => {}
@@ -1201,7 +1201,7 @@ fn compute_g2lk_synthetic_symbols(
     } else {
         0
     };
-    let dtor_size = if dodtor {
+    let dtor_size = if has_dodtor {
         8u32.saturating_add(dtor_count.saturating_mul(4))
     } else {
         0
