@@ -5,7 +5,7 @@ use crate::layout::plan_layout;
 use crate::resolver::resolve_object;
 use crate::resolver::ObjectSummary;
 use crate::writer::write_output;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 pub fn run(args: Args) -> anyhow::Result<()> {
@@ -97,11 +97,13 @@ fn load_objects_with_requests(
     initial_inputs: &[String],
     verbose: bool,
 ) -> anyhow::Result<(Vec<crate::format::obj::ObjectFile>, Vec<ObjectSummary>, Vec<String>)> {
+    const MAX_ARCHIVE_VISITS: usize = 64;
     let mut objects = Vec::new();
     let mut summaries = Vec::new();
     let mut input_names = Vec::new();
     let mut pending = VecDeque::<PathBuf>::new();
     let mut loaded = HashSet::<PathBuf>::new();
+    let mut archive_visits = HashMap::<PathBuf, usize>::new();
 
     for input in initial_inputs {
         pending.push_back(PathBuf::from(input));
@@ -109,7 +111,20 @@ fn load_objects_with_requests(
 
     while let Some(path) = pending.pop_front() {
         let abs = absolutize_path(&path)?;
-        if !loaded.insert(abs.clone()) {
+        if is_archive_like(&path) {
+            let cnt = archive_visits.entry(abs.clone()).or_insert(0);
+            *cnt += 1;
+            if *cnt > MAX_ARCHIVE_VISITS {
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_else(|| path.to_str().unwrap_or("<non-utf8>"));
+                anyhow::bail!("archive request loop detected: {name}");
+            }
+        }
+        // Keep one-pass semantics for normal object files, but allow re-reading
+        // archive inputs when they are explicitly listed multiple times.
+        if !is_archive_like(&path) && !loaded.insert(abs.clone()) {
             continue;
         }
         let bytes = std::fs::read(&abs).map_err(|_| {
@@ -139,7 +154,11 @@ fn load_objects_with_requests(
                 }
 
                 let base_dir = abs.parent().unwrap_or(Path::new("."));
-                enqueue_requests(&mut pending, base_dir, &summary.requests)?;
+                enqueue_requests(
+                    &mut pending,
+                    base_dir,
+                    &summary.requests,
+                )?;
                 objects.push(object);
                 summaries.push(summary);
                 input_names.push(path.to_string_lossy().to_string());
@@ -173,7 +192,11 @@ fn load_objects_with_requests(
                             object.commands.len()
                         );
                     }
-                    enqueue_requests(&mut pending, base_dir, &summary.requests)?;
+                    enqueue_requests(
+                        &mut pending,
+                        base_dir,
+                        &summary.requests,
+                    )?;
                     objects.push(object.clone());
                     summaries.push(summary.clone());
                     input_names.push(format!("{}({})", path.to_string_lossy(), member_name));
@@ -313,8 +336,9 @@ fn parse_ar_members(bytes: &[u8]) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
                     out.push((name, data));
                     continue;
                 }
+                anyhow::bail!("invalid GNU long-name reference: /{offset}");
             }
-            continue;
+            anyhow::bail!("unsupported ar special member name: {raw_name}");
         }
         out.push((trim_member_name(&raw_name), data));
     }
@@ -450,6 +474,18 @@ mod tests {
         out
     }
 
+    fn obj_with_xref(xref: &str) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&[0xb2, 0xff, 0x00, 0x00, 0x00, 0x01]);
+        out.extend_from_slice(xref.as_bytes());
+        out.push(0x00);
+        if out.len() % 2 == 1 {
+            out.push(0x00);
+        }
+        out.extend_from_slice(&[0x00, 0x00]);
+        out
+    }
+
     fn obj_with_def(name: &str) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&[0xb2, 0x01, 0x00, 0x00, 0x00, 0x00]);
@@ -509,6 +545,28 @@ mod tests {
         out.extend_from_slice(header2.as_bytes());
         out.extend_from_slice(payload);
         if payload.len() % 2 == 1 {
+            out.push(b'\n');
+        }
+        out
+    }
+
+    fn make_bsd_longname_ar(long_name: &str, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"!<arch>\n");
+        let mut name_field = format!("#1/{}", long_name.len());
+        while name_field.len() < 16 {
+            name_field.push(' ');
+        }
+        let size_total = long_name.len() + payload.len();
+        let mut size_field = size_total.to_string();
+        while size_field.len() < 10 {
+            size_field.insert(0, ' ');
+        }
+        let header = format!("{name_field}{:>12}{:>6}{:>6}{:>8}{size_field}`\n", 0, 0, 0, 0);
+        out.extend_from_slice(header.as_bytes());
+        out.extend_from_slice(long_name.as_bytes());
+        out.extend_from_slice(payload);
+        if size_total % 2 == 1 {
             out.push(b'\n');
         }
         out
@@ -636,6 +694,36 @@ mod tests {
     }
 
     #[test]
+    fn parses_bsd_longname_ar_members() {
+        let ar = make_bsd_longname_ar("bsd_long_name_member.o", &[0x00, 0x00]);
+        let members = parse_ar_members(&ar).expect("parse");
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].0, "bsd_long_name_member.o");
+        assert_eq!(members[0].1, vec![0x00, 0x00]);
+    }
+
+    #[test]
+    fn rejects_invalid_gnu_longname_reference() {
+        let mut ar = Vec::new();
+        ar.extend_from_slice(b"!<arch>\n");
+        // Member name /12 without // table
+        let mut name = String::from("/12");
+        while name.len() < 16 {
+            name.push(' ');
+        }
+        let mut size = String::from("2");
+        while size.len() < 10 {
+            size.insert(0, ' ');
+        }
+        let header = format!("{name}{:>12}{:>6}{:>6}{:>8}{size}`\n", 0, 0, 0, 0);
+        ar.extend_from_slice(header.as_bytes());
+        ar.extend_from_slice(&[0x00, 0x00]);
+
+        let err = parse_ar_members(&ar).expect_err("must fail");
+        assert!(err.to_string().contains("invalid GNU long-name reference"));
+    }
+
+    #[test]
     fn selects_archive_member_that_resolves_unresolved_xref() {
         let main_bytes = obj_with_xref_and_request("foo", "libx.a");
         let main = parse_object(&main_bytes).expect("main parse");
@@ -719,5 +807,66 @@ mod tests {
         let inputs = vec!["main.o".to_string()];
         let err = validate_unresolved_symbols(&[main_sum], &inputs).expect_err("must fail");
         assert!(err.to_string().contains("未定義シンボル: foo in main.o"));
+    }
+
+    #[test]
+    fn allows_archive_revisit_when_listed_multiple_times() {
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rhlk-linker-test-{uniq}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+
+        let lib = dir.join("libx.a");
+        let main = dir.join("main.o");
+        let ar = make_simple_ar(&[("foo.o", &obj_with_def("foo"))]);
+        fs::write(&lib, ar).expect("write lib");
+        fs::write(&main, obj_with_xref("foo")).expect("write main");
+
+        let inputs = vec![
+            lib.to_string_lossy().to_string(),
+            main.to_string_lossy().to_string(),
+            lib.to_string_lossy().to_string(),
+        ];
+        let (_, sums, names) = load_objects_with_requests(&inputs, false).expect("load");
+        validate_unresolved_symbols(&sums, &names).expect("resolved");
+        assert!(names.iter().any(|v| v.ends_with("libx.a(foo.o)")));
+
+        let _ = fs::remove_file(main);
+        let _ = fs::remove_file(lib);
+        let _ = fs::remove_dir(dir);
+    }
+
+    #[test]
+    fn allows_archive_revisit_via_multiple_requests() {
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rhlk-linker-test-{uniq}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+
+        let lib = dir.join("libx.a");
+        let main1 = dir.join("main1.o");
+        let main2 = dir.join("main2.o");
+        let ar = make_simple_ar(&[("foo.o", &obj_with_def("foo"))]);
+        fs::write(&lib, ar).expect("write lib");
+        fs::write(&main1, obj_with_xref_and_request("dummy", "libx.a")).expect("write main1");
+        fs::write(&main2, obj_with_xref_and_request("foo", "libx.a")).expect("write main2");
+
+        let inputs = vec![
+            main1.to_string_lossy().to_string(),
+            main2.to_string_lossy().to_string(),
+        ];
+        let (_, sums, names) = load_objects_with_requests(&inputs, false).expect("load");
+        // dummy stays unresolved (expected), but foo should be resolved by second archive visit.
+        let err = validate_unresolved_symbols(&sums, &names).expect_err("must have unresolved");
+        assert!(!err.to_string().contains("未定義シンボル: foo"));
+
+        let _ = fs::remove_file(main1);
+        let _ = fs::remove_file(main2);
+        let _ = fs::remove_file(lib);
+        let _ = fs::remove_dir(dir);
     }
 }
