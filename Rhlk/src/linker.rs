@@ -1,4 +1,5 @@
 use crate::cli::Args;
+use crate::format::FormatError;
 use crate::format::obj::parse_object;
 use crate::layout::plan_layout;
 use crate::resolver::resolve_object;
@@ -91,7 +92,23 @@ fn load_objects_with_requests(
                 .unwrap_or_else(|| path.to_str().unwrap_or("<non-utf8>"));
             anyhow::anyhow!("ファイルがありません: {name}")
         })?;
-        let object = parse_object(&bytes)?;
+        let object = match parse_object(&bytes) {
+            Ok(v) => v,
+            Err(FormatError::UnsupportedCommand(_)) if is_archive_like(&path) => {
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_else(|| path.to_str().unwrap_or("<non-utf8>"));
+                anyhow::bail!("archive/lib input is not supported yet: {name}");
+            }
+            Err(e) => {
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_else(|| path.to_str().unwrap_or("<non-utf8>"));
+                anyhow::bail!("{name}: {e}");
+            }
+        };
         let command_count = object.commands.len();
         let summary = resolve_object(&object);
 
@@ -171,6 +188,13 @@ fn absolutize_path(path: &Path) -> anyhow::Result<PathBuf> {
     Ok(cwd.join(path))
 }
 
+fn is_archive_like(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    ext.eq_ignore_ascii_case("a") || ext.eq_ignore_ascii_case("lib")
+}
+
 #[cfg(test)]
 mod tests {
     use super::load_objects_with_requests;
@@ -248,6 +272,30 @@ mod tests {
 
         let _ = fs::remove_file(main);
         let _ = fs::remove_file(sub);
+        let _ = fs::remove_dir(dir);
+    }
+
+    #[test]
+    fn reports_archive_request_as_not_supported() {
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rhlk-linker-test-{uniq}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+
+        let main = dir.join("main.o");
+        let lib = dir.join("libx.a");
+        fs::write(&main, [0xe0, 0x01, b'l', b'i', b'b', b'x', b'.', b'a', 0x00, 0x00]).expect("write main");
+        // minimal ar magic so parse_object fails with unsupported command
+        fs::write(&lib, b"!<arch>\n").expect("write lib");
+
+        let inputs = vec![main.to_string_lossy().to_string()];
+        let err = load_objects_with_requests(&inputs, false).expect_err("must fail");
+        assert!(err.to_string().contains("archive/lib input is not supported yet: libx.a"));
+
+        let _ = fs::remove_file(main);
+        let _ = fs::remove_file(lib);
         let _ = fs::remove_dir(dir);
     }
 }
