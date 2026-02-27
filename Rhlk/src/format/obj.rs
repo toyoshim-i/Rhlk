@@ -39,6 +39,10 @@ pub enum Command {
     },
 }
 
+/// Parses one HAS/HLK object stream into structured commands.
+///
+/// # Errors
+/// Returns `FormatError` when the stream is malformed or contains unsupported commands.
 pub fn parse_object(input: &[u8]) -> Result<ObjectFile, FormatError> {
     let mut reader = Reader::new(input);
     let mut commands = Vec::new();
@@ -75,18 +79,18 @@ pub fn parse_object(input: &[u8]) -> Result<ObjectFile, FormatError> {
                 });
             }
             _ if (code & 0xff00) == 0x1000 => {
-                let size = (code as u8 as usize) + 1;
+                let size = usize::from(code.to_be_bytes()[1]) + 1;
                 let data = reader.read_bytes(size)?.to_vec();
                 reader.align_even();
                 commands.push(Command::RawData(data));
             }
             _ if (code & 0xff00) == 0x2000 => {
-                let section = code as u8;
+                let section = code.to_be_bytes()[1];
                 let _reserved = reader.read_u32_be()?;
                 commands.push(Command::ChangeSection { section });
             }
             _ if (code & 0xff00) == 0xc000 => {
-                let section = code as u8;
+                let section = code.to_be_bytes()[1];
                 let size = reader.read_u32_be()?;
                 let name = reader.read_cstring_even()?;
                 commands.push(Command::Header {
@@ -96,7 +100,7 @@ pub fn parse_object(input: &[u8]) -> Result<ObjectFile, FormatError> {
                 });
             }
             _ if (code & 0xff00) == 0xb200 => {
-                let section = code as u8;
+                let section = code.to_be_bytes()[1];
                 let value = reader.read_u32_be()?;
                 let name = reader.read_cstring_even()?;
                 commands.push(Command::DefineSymbol {

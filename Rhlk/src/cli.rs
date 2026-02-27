@@ -22,7 +22,7 @@ fn parse_load_mode(input: &str) -> Result<u8, String> {
     if v > 2 {
         return Err(format!("load mode must be 0..2: {input}"));
     }
-    Ok(v as u8)
+    u8::try_from(v).map_err(|_| format!("load mode must be 0..2: {input}"))
 }
 
 fn parse_define_arg(input: &str) -> Result<DefineArg, String> {
@@ -44,61 +44,66 @@ fn normalize_argv_from_iter<I>(args: I) -> Vec<OsString>
 where
     I: IntoIterator<Item = OsString>,
 {
-    let mut argv = Vec::new();
+    let mut normalized = Vec::new();
     for arg in args {
         if arg == "-an" {
-            argv.push("--an".into());
+            normalized.push("--an".into());
             continue;
         }
         if arg == "-rn" {
-            argv.push("--rn".into());
+            normalized.push("--rn".into());
             continue;
         }
         if arg == "-0" {
-            argv.push("--g2lk-off".into());
+            normalized.push("--g2lk-off".into());
             continue;
         }
         if arg == "-1" {
-            argv.push("--g2lk-on".into());
+            normalized.push("--g2lk-on".into());
             continue;
         }
         if arg == "-l" {
-            argv.push("--use-env-lib".into());
+            normalized.push("--use-env-lib".into());
             continue;
         }
         if let Some(s) = arg.to_str() {
             if s.starts_with("-l") && s.len() > 2 && !s.starts_with("--") {
-                argv.push("-l".into());
-                argv.push(s[2..].into());
+                normalized.push("-l".into());
+                normalized.push(s[2..].into());
                 continue;
             }
         }
-        argv.push(arg);
+        normalized.push(arg);
     }
-    argv
+    normalized
 }
 
+#[must_use]
 pub fn normalize_argv() -> Vec<OsString> {
     normalize_argv_from_iter(std::env::args_os())
 }
 
-pub fn finalize_compat_args(args: &mut Args, argv: &[OsString]) -> Result<(), String> {
+/// Applies command-line compatibility rules that depend on raw argv order.
+///
+/// # Errors
+/// Returns an error for mutually exclusive compatibility switches.
+pub fn finalize_compat_args(args: &mut Args, raw_argv: &[OsString]) -> Result<(), String> {
     if args.g2lk_off && args.g2lk_on {
         return Err("--g2lk-off and --g2lk-on are mutually exclusive".to_string());
     }
-    let verbose_last = argv.iter().rposition(|a| a == "-v" || a == "--verbose");
-    let quiet_last = argv.iter().rposition(|a| a == "-z" || a == "--quiet");
+    let verbose_last = raw_argv.iter().rposition(|a| a == "-v" || a == "--verbose");
+    let quiet_last = raw_argv.iter().rposition(|a| a == "-z" || a == "--quiet");
     args.verbose = match (verbose_last, quiet_last) {
         (Some(v), Some(z)) => v > z,
         (Some(_), None) => true,
-        (None, Some(_)) => false,
-        (None, None) => false,
+        (None, Some(_) | None) => false,
     };
     Ok(())
 }
 
 #[derive(Debug, Parser)]
 #[command(name = "rhlk", version)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Args {
     #[arg(short = 'o', long = "output")]
     pub output: Option<String>,

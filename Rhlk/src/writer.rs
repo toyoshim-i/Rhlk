@@ -321,6 +321,7 @@ fn build_x_image_with_options(
     Ok(image)
 }
 
+#[allow(clippy::similar_names)]
 fn build_scd_passthrough(
     objects: &[ObjectFile],
     summaries: &[ObjectSummary],
@@ -533,6 +534,7 @@ fn decode_scd_entry_name(entry: &[u8], ninfo: &[u8]) -> Result<Vec<u8>> {
     Ok(ninfo[off..off + rel_end].to_vec())
 }
 
+#[allow(clippy::similar_names)]
 fn build_scd_xdef_map(summaries: &[ObjectSummary]) -> HashMap<Vec<u8>, ScdXdef> {
     let mut xdefs = HashMap::<Vec<u8>, ScdXdef>::new();
     let mut non_common = HashSet::<Vec<u8>>::new();
@@ -619,6 +621,7 @@ fn build_scd_xdef_map(summaries: &[ObjectSummary]) -> HashMap<Vec<u8>, ScdXdef> 
     xdefs
 }
 
+#[allow(clippy::similar_names)]
 fn einfo_section_delta(
     sect: u16,
     placement: &BTreeMap<SectionKind, u32>,
@@ -1557,6 +1560,7 @@ fn validate_link_inputs(
     validate_unsupported_expression_commands(objects, input_paths, summaries, g2lk_mode)
 }
 
+#[allow(clippy::similar_names)]
 fn validate_unsupported_expression_commands(
     objects: &[ObjectFile],
     input_paths: &[String],

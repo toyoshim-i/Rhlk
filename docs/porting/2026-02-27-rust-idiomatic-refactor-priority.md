@@ -180,7 +180,7 @@
 - P3-1: 完了
   - `load_objects_with_requests` の共通処理を `add_loaded_object` / `display_name` へ抽出。
   - `resolve_requested_path` を `Iterator::find` 化。
-- P3-2: 進行中
+- P3-2: 完了
   - `writer.rs` の `patch_opaque` 系で数値変換 helper（`code_hi/lo`, `i32_low_u8/u16`, bit-cast helper）を導入。
   - `label_no as u32` 等を `u32::from(...)` に置換し、意図しない縮小 cast を削減。
   - `patch_opaque_commands` を `Result<()>` から副作用関数へ整理し、不要な `?` を除去。
@@ -193,6 +193,7 @@
   - `writer/map.rs` の文字列生成を `writeln!` 化し、`format_push_string` を解消。
   - `resolver.rs` に `#[must_use]` 付与と `usize -> u32` 変換 helper を適用。
   - `linker.rs` のフォーマット/closure 警告を解消し、内部 helper に `too_many_arguments` 許可を明示。
+  - `cli.rs` / `format/obj.rs` / `layout.rs` / `linker.rs` の pedantic 警告を追加で解消し、`clippy` を全体クリーン化。
 - P3-3: 完了
   - `format/obj.rs` の opaque opcode 判定分岐を整理し、重複 arm を統合。
   - `is_label_section` を range pattern 化、`align_even` を `is_multiple_of` ベースへ更新。
@@ -200,3 +201,4 @@
 検証:
 - `cargo test -q --manifest-path Rhlk/Cargo.toml`: pass
 - `./tools/run_hlkx_regression.sh`: All regression cases matched
+- `cargo clippy --all-targets --all-features -- -W clippy::all -W clippy::pedantic`: pass

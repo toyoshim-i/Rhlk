@@ -9,6 +9,10 @@ use std::env;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
+/// Runs the complete link pipeline from CLI args.
+///
+/// # Errors
+/// Returns an error when input expansion, parsing, validation, layout, or output emission fails.
 pub fn run(args: Args) -> anyhow::Result<()> {
     validate_args(&args)?;
     print_title_if_needed(&args);

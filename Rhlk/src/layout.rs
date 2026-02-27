@@ -21,6 +21,7 @@ pub struct LayoutDiagnostics {
     pub common_warnings: usize,
 }
 
+#[must_use]
 pub fn plan_layout(objects: &[ObjectSummary]) -> LayoutPlan {
     let mut placements = objects
         .iter()
@@ -146,24 +147,23 @@ fn merge_common_symbols(objects: &[ObjectSummary]) -> (CommonTotals, LayoutDiagn
                             existing.size = new_size;
                         }
                     }
-                    (SymbolClass::Common, SymbolClass::Other)
-                    | (SymbolClass::RCommon, SymbolClass::Other)
-                    | (SymbolClass::RLCommon, SymbolClass::Other) => {
+                    (
+                        SymbolClass::Common | SymbolClass::RCommon | SymbolClass::RLCommon,
+                        SymbolClass::Other,
+                    ) => {
                         sub_total(&mut totals, existing.class, existing.size);
                         existing.class = SymbolClass::Other;
                         existing.size = new_size;
                     }
-                    (SymbolClass::Other, SymbolClass::Common)
-                    | (SymbolClass::Other, SymbolClass::RCommon)
-                    | (SymbolClass::Other, SymbolClass::RLCommon) => {
+                    (
+                        SymbolClass::Other,
+                        SymbolClass::Common | SymbolClass::RCommon | SymbolClass::RLCommon,
+                    ) => {
                         diagnostics.common_warnings += 1;
                     }
-                    (SymbolClass::Common, SymbolClass::RCommon)
-                    | (SymbolClass::Common, SymbolClass::RLCommon)
-                    | (SymbolClass::RCommon, SymbolClass::Common)
-                    | (SymbolClass::RCommon, SymbolClass::RLCommon)
-                    | (SymbolClass::RLCommon, SymbolClass::Common)
-                    | (SymbolClass::RLCommon, SymbolClass::RCommon) => {
+                    (SymbolClass::Common | SymbolClass::RLCommon, SymbolClass::RCommon)
+                    | (SymbolClass::Common | SymbolClass::RCommon, SymbolClass::RLCommon)
+                    | (SymbolClass::RCommon | SymbolClass::RLCommon, SymbolClass::Common) => {
                         diagnostics.common_conflicts += 1;
                     }
                     (SymbolClass::Other, SymbolClass::Other) => {}
