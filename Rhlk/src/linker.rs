@@ -461,9 +461,10 @@ fn resolve_gnu_long_name(table: Option<&[u8]>, offset: usize) -> Option<String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        is_ar_archive, load_objects_with_requests, parse_ar_members, select_archive_members,
-        resolve_map_output, validate_unresolved_symbols,
+        is_ar_archive, load_objects_with_requests, parse_ar_members, resolve_map_output, run,
+        select_archive_members, validate_unresolved_symbols,
     };
+    use crate::cli::Args;
     use crate::format::obj::parse_object;
     use crate::resolver::resolve_object;
     use std::fs;
@@ -918,5 +919,64 @@ mod tests {
         assert_eq!(n.as_deref(), Some("foo.map"));
         let e = resolve_map_output(&Some("foo.txt".to_string()), &None, &[]);
         assert_eq!(e.as_deref(), Some("foo.txt"));
+    }
+
+    #[test]
+    fn run_writes_map_with_default_name() {
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rhlk-linker-test-{uniq}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let input = dir.join("foo.o");
+        fs::write(&input, [0x00, 0x00]).expect("write input");
+
+        let args = Args {
+            output: None,
+            r_format: false,
+            r_no_check: false,
+            make_mcs: false,
+            omit_bss: false,
+            map: Some(String::new()),
+            verbose: false,
+            inputs: vec![input.to_string_lossy().to_string()],
+        };
+        run(args).expect("run");
+        assert!(dir.join("foo.map").exists());
+
+        let _ = fs::remove_file(dir.join("foo.map"));
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_dir(dir);
+    }
+
+    #[test]
+    fn run_writes_map_with_explicit_name_extension_completion() {
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rhlk-linker-test-{uniq}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let input = dir.join("foo.o");
+        fs::write(&input, [0x00, 0x00]).expect("write input");
+
+        let map_path = dir.join("bar");
+        let args = Args {
+            output: None,
+            r_format: false,
+            r_no_check: false,
+            make_mcs: false,
+            omit_bss: false,
+            map: Some(map_path.to_string_lossy().to_string()),
+            verbose: false,
+            inputs: vec![input.to_string_lossy().to_string()],
+        };
+        run(args).expect("run");
+        assert!(dir.join("bar.map").exists());
+
+        let _ = fs::remove_file(dir.join("bar.map"));
+        let _ = fs::remove_file(input);
+        let _ = fs::remove_dir(dir);
     }
 }
