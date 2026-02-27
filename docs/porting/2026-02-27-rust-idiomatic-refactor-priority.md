@@ -211,6 +211,7 @@
   - `load_indirect_inputs` を `&Path` 引数へ変更し、エラー文言も `path.display()` で統一。
   - `resolve_lib_inputs` の戻り値を `Vec<PathBuf>` に変更し、`expand_inputs` 側で最終段だけ文字列化する構成へ整理。
   - `load_objects_with_requests` 実装本体を `load_objects_with_requests_paths(&[PathBuf], ...)` として分離し、内部処理を `PathBuf` ベースへ移行。
+  - `PreparedLink.expanded_inputs` / `expand_inputs` を `Vec<PathBuf>` 化し、`resolve_output_path` / `resolve_map_output` も `PathBuf` 入力へ統一。
 
 検証:
 - `cargo test -q --manifest-path Rhlk/Cargo.toml`: pass

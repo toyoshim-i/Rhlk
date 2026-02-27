@@ -30,7 +30,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
 struct PreparedLink {
     args: Args,
     runtime: RuntimeConfig,
-    expanded_inputs: Vec<String>,
+    expanded_inputs: Vec<PathBuf>,
     objects: Vec<ObjectFile>,
     summaries: Vec<ObjectSummary>,
     input_names: Vec<String>,
@@ -51,16 +51,16 @@ fn print_title_if_needed(runtime: RuntimeConfig) {
     }
 }
 
-fn expand_inputs(args: &Args) -> anyhow::Result<Vec<String>> {
-    let mut expanded_inputs = args.inputs.clone();
+fn expand_inputs(args: &Args) -> anyhow::Result<Vec<PathBuf>> {
+    let mut expanded_inputs = args
+        .inputs
+        .iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
     for indirect in &args.indirect_files {
         expanded_inputs.extend(load_indirect_inputs(Path::new(indirect))?);
     }
-    expanded_inputs.extend(
-        resolve_lib_inputs(args)?
-            .into_iter()
-            .map(|path| path.to_string_lossy().to_string()),
-    );
+    expanded_inputs.extend(resolve_lib_inputs(args)?);
     if expanded_inputs.is_empty() {
         anyhow::bail!("no input files")
     }
@@ -70,14 +70,10 @@ fn expand_inputs(args: &Args) -> anyhow::Result<Vec<String>> {
 fn prepare_objects(
     args: Args,
     runtime: RuntimeConfig,
-    expanded_inputs: Vec<String>,
+    expanded_inputs: Vec<PathBuf>,
 ) -> anyhow::Result<PreparedLink> {
-    let expanded_paths = expanded_inputs
-        .iter()
-        .map(PathBuf::from)
-        .collect::<Vec<_>>();
     let (objects, summaries, input_names) =
-        load_objects_with_requests_paths(&expanded_paths, runtime.verbose)?;
+        load_objects_with_requests_paths(&expanded_inputs, runtime.verbose)?;
     let mut objects = objects;
     let mut summaries = summaries;
     let mut input_names = input_names;
@@ -204,12 +200,12 @@ fn validate_start_address_uniqueness(
     Ok(())
 }
 
-fn load_indirect_inputs(path: &Path) -> anyhow::Result<Vec<String>> {
+fn load_indirect_inputs(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let text = std::fs::read_to_string(path)
         .map_err(|_| anyhow::anyhow!("ファイルがありません: {}", path.display()))?;
     Ok(text
         .split_whitespace()
-        .map(std::string::ToString::to_string)
+        .map(PathBuf::from)
         .collect::<Vec<_>>())
 }
 
@@ -426,12 +422,12 @@ fn update_section_info_rsize(summaries: &mut [ObjectSummary], layout: &crate::la
     }
 }
 
-fn resolve_output_path(args: &Args, inputs: &[String]) -> PathBuf {
+fn resolve_output_path(args: &Args, inputs: &[PathBuf]) -> PathBuf {
     let explicit = args.output.is_some();
     let base = if let Some(out) = args.output.as_ref() {
         PathBuf::from(out)
     } else if let Some(first) = inputs.first() {
-        let p = PathBuf::from(first);
+        let p = first.clone();
         if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
             if let Some(parent) = p.parent() {
                 if parent.as_os_str().is_empty() {
@@ -443,7 +439,7 @@ fn resolve_output_path(args: &Args, inputs: &[String]) -> PathBuf {
                 PathBuf::from(stem)
             }
         } else {
-            PathBuf::from(first)
+            p
         }
     } else {
         PathBuf::from("a")
@@ -474,7 +470,7 @@ fn resolve_output_path(args: &Args, inputs: &[String]) -> PathBuf {
 fn resolve_map_output(
     map_opt: Option<&str>,
     output_opt: Option<&Path>,
-    inputs: &[String],
+    inputs: &[PathBuf],
 ) -> Option<PathBuf> {
     let raw = map_opt?;
     if !raw.is_empty() {
@@ -486,7 +482,7 @@ fn resolve_map_output(
     }
     let p = output_opt
         .map(Path::to_path_buf)
-        .or_else(|| inputs.first().map(PathBuf::from))?;
+        .or_else(|| inputs.first().cloned())?;
     let stem = p.file_stem()?.to_string_lossy();
     let mut out = if let Some(parent) = p.parent() {
         parent.join(format!("{stem}.map"))
@@ -1430,9 +1426,9 @@ mod tests {
 
     #[test]
     fn resolves_map_output_name() {
-        let o = resolve_map_output(Some(""), Some(Path::new("out.x")), &["in.o".to_string()]);
+        let o = resolve_map_output(Some(""), Some(Path::new("out.x")), &[PathBuf::from("in.o")]);
         assert_eq!(o, Some(PathBuf::from("out.map")));
-        let i = resolve_map_output(Some(""), None, &["src/main.o".to_string()]);
+        let i = resolve_map_output(Some(""), None, &[PathBuf::from("src/main.o")]);
         assert_eq!(i, Some(PathBuf::from("src/main.map")));
         let n = resolve_map_output(Some("foo"), None, &[]);
         assert_eq!(n, Some(PathBuf::from("foo.map")));
@@ -1469,22 +1465,23 @@ mod tests {
             g2lk_on: false,
             inputs: vec!["foo.o".to_string()],
         };
-        assert_eq!(resolve_output_path(&args, &args.inputs), PathBuf::from("foo.x"));
+        let inputs = vec![PathBuf::from("foo.o")];
+        assert_eq!(resolve_output_path(&args, &inputs), PathBuf::from("foo.x"));
 
         args.no_x_ext = true;
-        assert_eq!(resolve_output_path(&args, &args.inputs), PathBuf::from("foo"));
+        assert_eq!(resolve_output_path(&args, &inputs), PathBuf::from("foo"));
 
         args.opt_an = true;
-        assert_eq!(resolve_output_path(&args, &args.inputs), PathBuf::from("foo.x"));
+        assert_eq!(resolve_output_path(&args, &inputs), PathBuf::from("foo.x"));
 
         args.output = Some("bar".to_string());
-        assert_eq!(resolve_output_path(&args, &args.inputs), PathBuf::from("bar"));
+        assert_eq!(resolve_output_path(&args, &inputs), PathBuf::from("bar"));
 
         args.r_format = true;
-        assert_eq!(resolve_output_path(&args, &args.inputs), PathBuf::from("bar.r"));
+        assert_eq!(resolve_output_path(&args, &inputs), PathBuf::from("bar.r"));
 
         args.make_mcs = true;
-        assert_eq!(resolve_output_path(&args, &args.inputs), PathBuf::from("bar.mcs"));
+        assert_eq!(resolve_output_path(&args, &inputs), PathBuf::from("bar.mcs"));
     }
 
     #[test]
