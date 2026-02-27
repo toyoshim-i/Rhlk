@@ -293,4 +293,34 @@ mod tests {
         assert!(matches!(object.commands[2], Command::Opaque { code: 0xa010, .. }));
         assert!(matches!(object.commands[3], Command::DefineSymbol { section: 0xff, .. }));
     }
+
+    #[test]
+    fn parses_ctor_dtor_opaque_commands() {
+        let data: &[u8] = &[
+            // 4c01 adr.l
+            0x4c, 0x01, 0x12, 0x34, 0x56, 0x78,
+            // 4d01 adr.l
+            0x4d, 0x01, 0x87, 0x65, 0x43, 0x21,
+            // end
+            0x00, 0x00,
+        ];
+
+        let object = parse_object(data).expect("parse should succeed");
+        assert_eq!(object.commands.len(), 3);
+        assert_eq!(
+            object.commands[0],
+            Command::Opaque {
+                code: 0x4c01,
+                payload: vec![0x12, 0x34, 0x56, 0x78]
+            }
+        );
+        assert_eq!(
+            object.commands[1],
+            Command::Opaque {
+                code: 0x4d01,
+                payload: vec![0x87, 0x65, 0x43, 0x21]
+            }
+        );
+        assert!(matches!(object.commands[2], Command::End));
+    }
 }
