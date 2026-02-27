@@ -4,7 +4,10 @@ use crate::format::obj::{Command, ObjectFile, parse_object};
 use crate::layout::plan_layout;
 use crate::resolver::resolve_object;
 use crate::resolver::ObjectSummary;
-use crate::writer::{OutputOptions, write_map, write_output};
+use crate::writer::{
+    BssPolicy, OutputFormat, OutputOptions, RelocationCheck, SymbolTablePolicy, write_map,
+    write_output,
+};
 use std::env;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -126,11 +129,28 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
     let output = resolve_output_path(args, &expanded_inputs);
     let output_s = output.to_string_lossy().to_string();
     let options = OutputOptions {
-        r_format: args.r_format || args.make_mcs,
-        r_no_check: args.r_no_check,
-        omit_bss: args.omit_bss,
-        make_mcs: args.make_mcs,
-        cut_symbols: args.cut_symbols,
+        format: if args.make_mcs {
+            OutputFormat::Mcs
+        } else if args.r_format {
+            OutputFormat::R
+        } else {
+            OutputFormat::X
+        },
+        relocation_check: if args.r_no_check {
+            RelocationCheck::Skip
+        } else {
+            RelocationCheck::Strict
+        },
+        bss_policy: if args.omit_bss {
+            BssPolicy::Omit
+        } else {
+            BssPolicy::Include
+        },
+        symbol_table: if args.cut_symbols {
+            SymbolTablePolicy::Cut
+        } else {
+            SymbolTablePolicy::Keep
+        },
         base_address: args.base_address.unwrap_or(0),
         load_mode: args.load_mode.unwrap_or(0),
         section_info: args.section_info,

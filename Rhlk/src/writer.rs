@@ -23,13 +23,36 @@ enum WriterError {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[allow(clippy::struct_excessive_bools)]
+pub enum OutputFormat {
+    X,
+    R,
+    Mcs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelocationCheck {
+    Strict,
+    Skip,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BssPolicy {
+    Include,
+    Omit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolTablePolicy {
+    Keep,
+    Cut,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct OutputOptions {
-    pub r_format: bool,
-    pub r_no_check: bool,
-    pub omit_bss: bool,
-    pub make_mcs: bool,
-    pub cut_symbols: bool,
+    pub format: OutputFormat,
+    pub relocation_check: RelocationCheck,
+    pub bss_policy: BssPolicy,
+    pub symbol_table: SymbolTablePolicy,
     pub base_address: u32,
     pub load_mode: u8,
     pub section_info: bool,
@@ -50,14 +73,27 @@ pub fn write_output(
 ) -> Result<()> {
     validate_link_inputs(objects, input_paths, summaries, options.g2lk_mode)?;
 
-    if options.r_format && !options.r_no_check {
+    if matches!(options.format, OutputFormat::R | OutputFormat::Mcs)
+        && matches!(options.relocation_check, RelocationCheck::Strict)
+    {
         validate_r_convertibility(objects, summaries, layout, output_path)?;
     }
 
-    let mut payload = if options.r_format {
-        build_r_payload(objects, summaries, layout, options.omit_bss)?
+    let mut payload = if matches!(options.format, OutputFormat::R | OutputFormat::Mcs) {
+        build_r_payload(
+            objects,
+            summaries,
+            layout,
+            matches!(options.bss_policy, BssPolicy::Omit),
+        )?
     } else {
-        build_x_image_with_options(objects, summaries, layout, !options.cut_symbols).map_err(|err| {
+        build_x_image_with_options(
+            objects,
+            summaries,
+            layout,
+            matches!(options.symbol_table, SymbolTablePolicy::Keep),
+        )
+        .map_err(|err| {
             if err
                 .downcast_ref::<WriterError>()
                 .is_some_and(|e| matches!(e, WriterError::RelocationTargetAddressIsOdd { .. }))
@@ -72,15 +108,20 @@ pub fn write_output(
         })?
     };
 
-    if !options.r_format && (options.base_address != 0 || options.load_mode != 0) {
+    if matches!(options.format, OutputFormat::X) && (options.base_address != 0 || options.load_mode != 0) {
         apply_x_header_options(&mut payload, options.base_address, options.load_mode)?;
     }
     if options.section_info {
-        patch_section_size_info(&mut payload, options.r_format, summaries, layout)?;
+        patch_section_size_info(
+            &mut payload,
+            matches!(options.format, OutputFormat::R | OutputFormat::Mcs),
+            summaries,
+            layout,
+        )?;
     }
 
-    if options.make_mcs {
-        let bss_extra = if options.omit_bss {
+    if matches!(options.format, OutputFormat::Mcs) {
+        let bss_extra = if matches!(options.bss_policy, BssPolicy::Omit) {
             0
         } else {
             layout
