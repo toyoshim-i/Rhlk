@@ -1,7 +1,7 @@
 use clap::Parser;
 
 #[derive(Debug, Parser)]
-#[command(name = "rhlk")]
+#[command(name = "rhlk", version)]
 pub struct Args {
     #[arg(short = 'o', long = "output")]
     pub output: Option<String>,
