@@ -14,3 +14,12 @@ stack_under_9200	-	stack_under_9200.o	x
 stack_under_9600	-	stack_under_9600.o	x
 stack_under_9a00	-	stack_under_9a00.o	x
 stack_over	-	stack_over.o	x
+a0_neg	-	a0_neg_main.o a0_label.o	x
+a0_not	-	a0_not_main.o a0_label.o	x
+a0_high	-	a0_high_main.o a0_label.o	x
+a0_low	-	a0_low_main.o a0_label.o	x
+a0_highw	-	a0_highw_main.o a0_label.o	x
+a0_loww	-	a0_loww_main.o a0_label.o	x
+stk91_unary	-	stk91_main.o a0_label.o	x
+stk93_unary	-	stk93_main.o a0_label.o	x
+a0_attr_neg	-	a0_attr_main.o a0_text_label.o	x

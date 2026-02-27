@@ -1019,6 +1019,8 @@ fn patch_opaque_commands(
                         {
                             calc_stack.push(entry);
                         }
+                    } else if hi == 0xa0 {
+                        let _ = evaluate_a0(lo, &mut calc_stack);
                     }
                     let local = cursor_by_section.get(&current).copied().unwrap_or(0);
                     if let Some(bytes) =
@@ -1467,6 +1469,23 @@ fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
                 a.stat = -1;
                 calc_stack.push(a);
                 return vec!["不正な式"];
+            }
+            if a.stat == 0 {
+                a.value = match lo {
+                    0x01 => a.value.wrapping_neg(),
+                    0x03 => {
+                        if a.value == 0 {
+                            -1
+                        } else {
+                            0
+                        }
+                    }
+                    0x04 => ((((a.value as u32) & 0xffff) >> 8) as u16 as i16) as i32,
+                    0x05 => (a.value as u32 & 0xff) as i32,
+                    0x06 => ((a.value as u32) >> 16) as i32,
+                    0x07 => (a.value as u32 & 0xffff) as i32,
+                    _ => a.value,
+                };
             }
             calc_stack.push(a);
             Vec::new()
