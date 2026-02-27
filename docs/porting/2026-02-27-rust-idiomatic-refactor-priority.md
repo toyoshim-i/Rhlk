@@ -137,6 +137,7 @@
 - P0-2: 完了（第一段）
   - `writer/map.rs` へ map 出力責務を分離。
   - `writer/ctor_dtor.rs` へ ctor/dtor テーブル処理を分離。
+  - `writer/expr.rs` を新設し、式評価・式由来エラー分類ロジックを `writer.rs` から分離。
 - P0-3: 完了
   - `writer::OutputOptions` を導入し `write_output` の多引数を解消。
   - `linker::run` を段階関数へ分割:
