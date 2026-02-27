@@ -180,10 +180,10 @@ fn validate_start_address_uniqueness(
 
 fn load_indirect_inputs(path: &str) -> anyhow::Result<Vec<String>> {
     let text = std::fs::read_to_string(path)
-        .map_err(|_| anyhow::anyhow!("ファイルがありません: {}", path))?;
+        .map_err(|_| anyhow::anyhow!("ファイルがありません: {path}"))?;
     Ok(text
         .split_whitespace()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect::<Vec<_>>())
 }
 
@@ -598,6 +598,7 @@ fn load_objects_with_requests(
     Ok((objects, summaries, input_names))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_loaded_object(
     verbose: bool,
     pending: &mut VecDeque<PathBuf>,

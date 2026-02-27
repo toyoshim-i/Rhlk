@@ -189,6 +189,10 @@
   - `build_x_header` を `XHeader` struct 引数化して多引数警告を解消。
   - `main.rs` / `cli.rs` の `similar_names` を命名修正で解消。
   - `writer.rs` の `u32 -> i64` / `usize -> u32` 変換を `From` / helper 経由へ統一。
+  - `writer/expr.rs` の式演算分岐を整理し、符号付き/符号なし変換を `cast_unsigned/cast_signed` ベースへ統一。
+  - `writer/map.rs` の文字列生成を `writeln!` 化し、`format_push_string` を解消。
+  - `resolver.rs` に `#[must_use]` 付与と `usize -> u32` 変換 helper を適用。
+  - `linker.rs` のフォーマット/closure 警告を解消し、内部 helper に `too_many_arguments` 許可を明示。
 - P3-3: 完了
   - `format/obj.rs` の opaque opcode 判定分岐を整理し、重複 arm を統合。
   - `is_label_section` を range pattern 化、`align_even` を `is_multiple_of` ベースへ更新。

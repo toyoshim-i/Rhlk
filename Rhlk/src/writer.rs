@@ -23,6 +23,7 @@ enum WriterError {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct OutputOptions {
     pub r_format: bool,
     pub r_no_check: bool,
@@ -35,6 +36,10 @@ pub struct OutputOptions {
     pub g2lk_mode: bool,
 }
 
+/// Writes a linked output image to `output_path`.
+///
+/// # Errors
+/// Returns an error when validation, image generation, header patching, or file write fails.
 pub fn write_output(
     output_path: &str,
     options: OutputOptions,
@@ -235,12 +240,10 @@ fn build_x_image_with_options(
 
     let text_size = linked
         .get(&SectionKind::Text)
-        .map(|v| v.len() as u32)
-        .unwrap_or(0);
+        .map_or(0, |v| usize_to_u32_saturating(v.len()));
     let data_size = linked
         .get(&SectionKind::Data)
-        .map(|v| v.len() as u32)
-        .unwrap_or(0);
+        .map_or(0, |v| usize_to_u32_saturating(v.len()));
     let bss_only = layout
         .total_size_by_section
         .get(&SectionKind::Bss)
@@ -286,13 +289,13 @@ fn build_x_image_with_options(
     } else {
         Vec::new()
     };
-    let symbol_size = symbol_data.len() as u32;
+    let symbol_size = usize_to_u32_saturating(symbol_data.len());
     let reloc_table = build_relocation_table(objects, summaries, layout, text_size, &global_symbol_addrs)?;
-    let reloc_size = reloc_table.len() as u32;
+    let reloc_size = usize_to_u32_saturating(reloc_table.len());
     let (scd_line, scd_info, scd_name) = build_scd_passthrough(objects, summaries, layout)?;
-    let scd_line_size = scd_line.len() as u32;
-    let scd_info_size = scd_info.len() as u32;
-    let scd_name_size = scd_name.len() as u32;
+    let scd_line_size = usize_to_u32_saturating(scd_line.len());
+    let scd_info_size = usize_to_u32_saturating(scd_info.len());
+    let scd_name_size = usize_to_u32_saturating(scd_name.len());
 
     let exec = resolve_exec_address(summaries, text_size, data_size, bss_size)?.unwrap_or(0);
     let header = build_x_header(XHeader {
@@ -379,7 +382,7 @@ fn build_scd_passthrough(
 }
 
 fn rebase_scd_line_table(input: &[u8], text_pos: u32, sinfo_pos_entries: u32) -> Vec<u8> {
-    if input.len() % 6 != 0 {
+    if !input.len().is_multiple_of(6) {
         return input.to_vec();
     }
     let mut out = Vec::with_capacity(input.len());
@@ -425,7 +428,7 @@ fn rebase_scd_info_table(
         if let Some(delta) = delta {
             if delta != 0 {
                 let mut val = u32::from_be_bytes([out[p + 8], out[p + 9], out[p + 10], out[p + 11]]);
-                val = val.wrapping_add(delta as i32 as u32);
+                val = val.wrapping_add(i64_low_u32(delta));
                 out[p + 8..p + 12].copy_from_slice(&val.to_be_bytes());
             }
         }
@@ -476,7 +479,7 @@ fn rebase_scd_info_table(
                 if delta != 0 {
                     let off =
                         u32::from_be_bytes([out[q + 4], out[q + 5], out[q + 6], out[q + 7]]);
-                    let adj = off.wrapping_add(delta as i32 as u32);
+                    let adj = off.wrapping_add(i64_low_u32(delta));
                     out[q + 4..q + 8].copy_from_slice(&adj.to_be_bytes());
                 }
             }
@@ -492,13 +495,11 @@ fn sinfo_section_delta(
     layout: &LayoutPlan,
 ) -> Result<Option<i64>> {
     match sect {
-        0x0000 => Ok(None),
         0x0001 | 0x0002 | 0x0003 | 0x0005 | 0x0006 | 0x0008 | 0x0009 => {
             Ok(einfo_section_delta(sect, placement, layout))
         }
-        0x0004 | 0x0007 | 0x000a => bail!("unsupported SCD sinfo section: {sect:#06x}"),
         // xref/common/rcommon/rlcommon are carried as-is in make_scdinfo path.
-        0x00fc..=0x00fe | 0xfffc..=0xffff => Ok(None),
+        0x0000 | 0x00fc..=0x00fe | 0xfffc..=0xffff => Ok(None),
         _ => bail!("unsupported SCD sinfo section: {sect:#06x}"),
     }
 }
@@ -623,21 +624,27 @@ fn einfo_section_delta(
     placement: &BTreeMap<SectionKind, u32>,
     layout: &LayoutPlan,
 ) -> Option<i64> {
-    let text_total = layout
-        .total_size_by_section
-        .get(&SectionKind::Text)
-        .copied()
-        .unwrap_or(0) as i64;
-    let data_total = layout
-        .total_size_by_section
-        .get(&SectionKind::Data)
-        .copied()
-        .unwrap_or(0) as i64;
-    let bss_total = layout
-        .total_size_by_section
-        .get(&SectionKind::Bss)
-        .copied()
-        .unwrap_or(0) as i64;
+    let text_total = i64::from(
+        layout
+            .total_size_by_section
+            .get(&SectionKind::Text)
+            .copied()
+            .unwrap_or(0),
+    );
+    let data_total = i64::from(
+        layout
+            .total_size_by_section
+            .get(&SectionKind::Data)
+            .copied()
+            .unwrap_or(0),
+    );
+    let bss_total = i64::from(
+        layout
+            .total_size_by_section
+            .get(&SectionKind::Bss)
+            .copied()
+            .unwrap_or(0),
+    );
     let common_total = i64::from(
         layout
             .total_size_by_section
@@ -674,6 +681,11 @@ fn einfo_section_delta(
         0x0009 => Some(rlbss_pos),
         _ => None,
     }
+}
+
+fn i64_low_u32(value: i64) -> u32 {
+    let bytes = value.to_be_bytes();
+    u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]])
 }
 
 fn build_symbol_table(

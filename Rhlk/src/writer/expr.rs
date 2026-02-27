@@ -14,8 +14,7 @@ pub(super) fn classify_expression_errors(
     calc_stack: &mut Vec<ExprEntry>,
 ) -> Vec<&'static str> {
     const CALC_STACK_SIZE_HLK: usize = 1024;
-    let hi = (code >> 8) as u8;
-    let lo = code as u8;
+    let [hi, lo] = code.to_be_bytes();
     let payload = match cmd {
         Command::Opaque { payload, .. } => payload.as_slice(),
         _ => &[],
@@ -33,11 +32,11 @@ pub(super) fn classify_expression_errors(
         0xa0 => evaluate_a0(lo, calc_stack),
         opcode::OPH_WRT_STK_BYTE => evaluate_wrt_stk_9000(calc_stack),
         opcode::OPH_WRT_STK_WORD_TEXT => evaluate_wrt_stk_9100(calc_stack, current),
-        opcode::OPH_WRT_STK_LONG => evaluate_wrt_stk_long(calc_stack),
+        opcode::OPH_WRT_STK_LONG | opcode::OPH_WRT_STK_LONG_ALT | opcode::OPH_WRT_STK_LONG_RELOC => {
+            evaluate_wrt_stk_long(calc_stack)
+        }
         opcode::OPH_WRT_STK_BYTE_RAW => evaluate_wrt_stk_9300(calc_stack),
-        opcode::OPH_WRT_STK_LONG_ALT => evaluate_wrt_stk_long(calc_stack),
         opcode::OPH_WRT_STK_WORD_RELOC => evaluate_wrt_stk_9900(calc_stack, current),
-        opcode::OPH_WRT_STK_LONG_RELOC => evaluate_wrt_stk_long(calc_stack),
         0x40 | 0x43 => evaluate_direct_byte(lo, payload, summary, global_symbols),
         0x50 | 0x53 => evaluate_direct_byte_with_offset(lo, payload, summary, global_symbols),
         0x41 => evaluate_direct_word(lo, payload, summary, global_symbols, current),
@@ -77,6 +76,7 @@ fn evaluate_push_80(
     None
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
     match lo {
         0x02 => {
@@ -105,10 +105,10 @@ pub(super) fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'stat
                             0
                         }
                     }
-                    0x04 => ((((a.value as u32) & 0xffff) >> 8) as u16 as i16) as i32,
-                    0x05 => (a.value as u32 & 0xff) as i32,
-                    0x06 => ((a.value as u32) >> 16) as i32,
-                    0x07 => (a.value as u32 & 0xffff) as i32,
+                    0x04 => i32::from((((a.value.cast_unsigned() & 0xffff) >> 8) as u16).cast_signed()),
+                    0x05 => (a.value.cast_unsigned() & 0xff).cast_signed(),
+                    0x06 => (a.value.cast_unsigned() >> 16).cast_signed(),
+                    0x07 => (a.value.cast_unsigned() & 0xffff).cast_signed(),
                     _ => a.value,
                 };
             }
@@ -221,15 +221,15 @@ pub(super) fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'stat
 fn eval_a0_const_binop(lo: u8, b: i32, a: i32) -> i32 {
     match lo {
         0x09 => b.wrapping_mul(a),
-        0x0c => ((b as u32) >> ((a as u32) & 63)) as i32,
-        0x0d => ((b as u32) << ((a as u32) & 63)) as i32,
-        0x0e => b.wrapping_shr((a as u32) & 63),
+        0x0c => ((b.cast_unsigned()) >> (a.cast_unsigned() & 63)).cast_signed(),
+        0x0d => ((b.cast_unsigned()) << (a.cast_unsigned() & 63)).cast_signed(),
+        0x0e => b.wrapping_shr(a.cast_unsigned() & 63),
         0x11 => if b == a { -1 } else { 0 },
-        0x12 => if b != a { -1 } else { 0 },
-        0x13 => if (b as u32) < (a as u32) { -1 } else { 0 },
-        0x14 => if (b as u32) <= (a as u32) { -1 } else { 0 },
-        0x15 => if (b as u32) > (a as u32) { -1 } else { 0 },
-        0x16 => if (b as u32) >= (a as u32) { -1 } else { 0 },
+        0x12 => if b == a { 0 } else { -1 },
+        0x13 => if b.cast_unsigned() < a.cast_unsigned() { -1 } else { 0 },
+        0x14 => if b.cast_unsigned() <= a.cast_unsigned() { -1 } else { 0 },
+        0x15 => if b.cast_unsigned() > a.cast_unsigned() { -1 } else { 0 },
+        0x16 => if b.cast_unsigned() >= a.cast_unsigned() { -1 } else { 0 },
         0x17 => if b < a { -1 } else { 0 },
         0x18 => if b <= a { -1 } else { 0 },
         0x19 => if b > a { -1 } else { 0 },
@@ -508,9 +508,9 @@ fn resolve_xref(
     let xref = summary
         .xrefs
         .iter()
-        .find(|x| x.value == label_no as u32)?;
+        .find(|x| x.value == u32::from(label_no))?;
     let target = global_symbols.get(&xref.name)?;
-    Some((target.section, target.value as i32))
+    Some((target.section, u32_bits_to_i32(target.value)))
 }
 
 fn evaluate_rel_word(
@@ -602,4 +602,8 @@ fn fits_word(v: i32) -> bool {
 
 fn fits_word2(v: i32) -> bool {
     (-0x8000..=0x7fff).contains(&v)
+}
+
+fn u32_bits_to_i32(value: u32) -> i32 {
+    i32::from_be_bytes(value.to_be_bytes())
 }

@@ -23,6 +23,7 @@ pub enum SectionKind {
 }
 
 impl SectionKind {
+    #[must_use]
     pub fn from_u8(section: u8) -> Self {
         match section {
             0x00 => Self::Abs,
@@ -63,6 +64,7 @@ pub struct ObjectSummary {
     pub start_address: Option<(u16, u32)>,
 }
 
+#[must_use]
 pub fn resolve_object(object: &ObjectFile) -> ObjectSummary {
     let mut object_align = 2;
     let mut declared_section_sizes = BTreeMap::new();
@@ -83,7 +85,11 @@ pub fn resolve_object(object: &ObjectFile) -> ObjectSummary {
                 current_section = SectionKind::from_u8(*section);
             }
             Command::RawData(bytes) => {
-                bump_usage(&mut observed_section_usage, current_section, bytes.len() as u32);
+                bump_usage(
+                    &mut observed_section_usage,
+                    current_section,
+                    usize_to_u32_saturating(bytes.len()),
+                );
             }
             Command::DefineSpace { size } => {
                 bump_usage(&mut observed_section_usage, current_section, *size);
@@ -127,6 +133,10 @@ pub fn resolve_object(object: &ObjectFile) -> ObjectSummary {
         requests,
         start_address,
     }
+}
+
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 fn bump_usage(map: &mut BTreeMap<SectionKind, u32>, section: SectionKind, amount: u32) {

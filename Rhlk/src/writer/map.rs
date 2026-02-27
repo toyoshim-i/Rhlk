@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -6,6 +7,10 @@ use anyhow::{Context, Result};
 use crate::layout::LayoutPlan;
 use crate::resolver::{ObjectSummary, SectionKind};
 
+/// Writes a CRLF-normalized map text file.
+///
+/// # Errors
+/// Returns an error when writing `output_path` fails.
 pub fn write_map(
     exec_output_path: &str,
     output_path: &str,
@@ -48,6 +53,7 @@ pub fn write_map(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_map_text(
     exec_output_path: &str,
     summaries: &[ObjectSummary],
@@ -107,7 +113,7 @@ pub(crate) fn build_map_text(
     for (idx, summary) in summaries.iter().enumerate() {
         out.push_str("\n\n");
         out.push_str("==========================================================\n");
-        out.push_str(&format!("{}\n", display_obj_name(input_paths.get(idx), idx)));
+        let _ = writeln!(out, "{}", display_obj_name(input_paths.get(idx), idx));
         out.push_str("==========================================================\n");
         out.push_str(&format_align_line(summary.object_align));
 
@@ -141,7 +147,7 @@ pub(crate) fn build_map_text(
                     .get(xr.name.as_slice())
                     .cloned()
                     .unwrap_or_else(|| "<unknown>".to_string());
-                out.push_str(&format!("{n:<24} : in {owner}\n"));
+                let _ = writeln!(out, "{n:<24} : in {owner}");
             }
         }
         if !summary.symbols.is_empty() {
@@ -179,27 +185,26 @@ fn display_obj_name(path: Option<&String>, idx: usize) -> String {
     if let Some(p) = path {
         return Path::new(p)
             .file_name()
-            .map(|v| v.to_string_lossy().to_string())
-            .unwrap_or_else(|| p.clone());
+            .map_or_else(|| p.clone(), |v| v.to_string_lossy().to_string());
     }
     format!("obj{idx}")
 }
 
 fn format_symbol_line(name: &str, addr: u32, sect: &str) -> String {
     let mut out = format_label_prefix(name);
-    out.push_str(&format!("{addr:08x} ({sect:<7})\n"));
+    let _ = writeln!(out, "{addr:08x} ({sect:<7})");
     out
 }
 
 fn format_exec_line(exec: u32) -> String {
     let mut out = format_label_prefix("exec");
-    out.push_str(&format!("{exec:08x}\n"));
+    let _ = writeln!(out, "{exec:08x}");
     out
 }
 
 fn format_align_line(align: u32) -> String {
     let mut out = format_label_prefix("align");
-    out.push_str(&format!("{align:08x}\n"));
+    let _ = writeln!(out, "{align:08x}");
     out
 }
 
@@ -210,7 +215,7 @@ fn format_section_line(name: &str, pos: u32, size: u32) -> String {
         return label;
     }
     let end = pos.saturating_add(size).saturating_sub(1);
-    label.push_str(&format!("{pos:08x} - {end:08x} ({size:08x})\n"));
+    let _ = writeln!(label, "{pos:08x} - {end:08x} ({size:08x})");
     label
 }
 
