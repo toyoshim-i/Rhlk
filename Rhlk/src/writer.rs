@@ -16,6 +16,7 @@ pub fn write_output(
     cut_symbols: bool,
     base_address: u32,
     load_mode: u8,
+    section_info: bool,
     objects: &[ObjectFile],
     input_paths: &[String],
     summaries: &[ObjectSummary],
@@ -45,6 +46,9 @@ pub fn write_output(
 
     if !r_format && (base_address != 0 || load_mode != 0) {
         apply_x_header_options(&mut payload, base_address, load_mode)?;
+    }
+    if section_info {
+        patch_section_size_info(&mut payload, r_format, summaries, layout)?;
     }
 
     if make_mcs {
@@ -79,6 +83,64 @@ pub fn write_output(
         })?;
     }
     std::fs::write(output_path, payload).with_context(|| format!("failed to write {output_path}"))?;
+    Ok(())
+}
+
+fn patch_section_size_info(
+    payload: &mut [u8],
+    r_format: bool,
+    summaries: &[ObjectSummary],
+    layout: &LayoutPlan,
+) -> Result<()> {
+    let text_size = section_total(layout, SectionKind::Text);
+    let data_size = section_total(layout, SectionKind::Data);
+    let bss_only = section_total(layout, SectionKind::Bss);
+    let common_only = section_total(layout, SectionKind::Common);
+    let addrs = build_global_symbol_addrs(summaries, layout, text_size, data_size, bss_only, common_only);
+    let Some(sym) = addrs.get(b"___size_info".as_slice()) else {
+        bail!("section info symbol is missing: ___size_info");
+    };
+    if sym.section != SectionKind::Data {
+        bail!("section info symbol must be in data: ___size_info");
+    }
+
+    let roff_tbl_size = if r_format {
+        0
+    } else if payload.len() >= 28 && payload[0] == b'H' && payload[1] == b'U' {
+        u32::from_be_bytes([payload[24], payload[25], payload[26], payload[27]])
+    } else {
+        0
+    };
+    let values = [
+        text_size,
+        data_size,
+        section_total(layout, SectionKind::Bss),
+        section_total(layout, SectionKind::Common),
+        section_total(layout, SectionKind::Stack),
+        section_total(layout, SectionKind::RData),
+        section_total(layout, SectionKind::RBss),
+        section_total(layout, SectionKind::RCommon),
+        section_total(layout, SectionKind::RStack),
+        section_total(layout, SectionKind::RLData),
+        section_total(layout, SectionKind::RLBss),
+        section_total(layout, SectionKind::RLCommon),
+        section_total(layout, SectionKind::RLStack),
+        roff_tbl_size,
+    ];
+    let write_pos = if r_format {
+        sym.addr as usize
+    } else {
+        64usize.saturating_add(sym.addr as usize)
+    };
+    let need = write_pos.saturating_add(values.len() * 4);
+    if need > payload.len() {
+        bail!("section info region overflows output payload");
+    }
+    let mut p = write_pos;
+    for v in values {
+        payload[p..p + 4].copy_from_slice(&v.to_be_bytes());
+        p += 4;
+    }
     Ok(())
 }
 
@@ -2506,10 +2568,11 @@ mod tests {
 
     use crate::format::obj::{Command, ObjectFile};
     use crate::layout::plan_layout;
-    use crate::resolver::{ObjectSummary, SectionKind, Symbol};
+    use crate::resolver::{ObjectSummary, SectionKind, Symbol, resolve_object};
     use crate::writer::{
         apply_x_header_options, build_map_text, build_r_payload, build_x_image,
         build_x_image_with_options, validate_link_inputs,
+        patch_section_size_info,
         validate_r_convertibility,
     };
 
@@ -2708,6 +2771,55 @@ mod tests {
         assert_eq!(payload[3], 2);
         assert_eq!(&payload[4..8], &0x0000_6800u32.to_be_bytes());
         assert_eq!(&payload[8..12], &0x0000_6812u32.to_be_bytes());
+    }
+
+    #[test]
+    fn patches_section_size_info_block() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x02,
+                    size: 0x40,
+                    name: b"data".to_vec(),
+                },
+                Command::DefineSymbol {
+                    section: 0x02,
+                    value: 0,
+                    name: b"___size_info".to_vec(),
+                },
+                Command::ChangeSection { section: 0x02 },
+                Command::DefineSpace { size: 0x40 },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = resolve_object(&obj);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let mut image = build_x_image(&[obj], &[sum], &layout).expect("x");
+        image[24..28].copy_from_slice(&0x1122_3344u32.to_be_bytes());
+        patch_section_size_info(&mut image, false, &layout_dummy_summaries_with_size_info(), &layout)
+            .expect("patch");
+        // text/data/bss/common/stack/r*/roff
+        let base = 64usize;
+        assert_eq!(&image[base..base + 4], &0u32.to_be_bytes());
+        assert_eq!(&image[base + 4..base + 8], &0x40u32.to_be_bytes());
+        assert_eq!(&image[base + 52..base + 56], &0x1122_3344u32.to_be_bytes());
+    }
+
+    fn layout_dummy_summaries_with_size_info() -> Vec<ObjectSummary> {
+        vec![ObjectSummary {
+            object_align: 2,
+            declared_section_sizes: BTreeMap::new(),
+            observed_section_usage: BTreeMap::new(),
+            symbols: vec![Symbol {
+                name: b"___size_info".to_vec(),
+                section: SectionKind::Data,
+                value: 0,
+            }],
+            xrefs: Vec::new(),
+            requests: Vec::new(),
+            start_address: None,
+        }]
     }
 
     #[test]

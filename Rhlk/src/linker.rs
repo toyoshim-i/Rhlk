@@ -28,6 +28,9 @@ pub fn run(args: Args) -> anyhow::Result<()> {
     if !args.defines.is_empty() {
         inject_define_symbols(&args, &mut objects, &mut summaries, &mut input_names);
     }
+    if args.section_info {
+        inject_section_info_object(&mut objects, &mut summaries, &mut input_names);
+    }
     if let Some(align) = args.align {
         for s in &mut summaries {
             // Apply global default align only to objects that still have the default value.
@@ -54,6 +57,9 @@ pub fn run(args: Args) -> anyhow::Result<()> {
     }
 
     let layout = plan_layout(&summaries);
+    if args.section_info {
+        update_section_info_rsize(&mut summaries, &layout);
+    }
     if args.verbose {
         println!("layout totals:");
         for (section, size) in &layout.total_size_by_section {
@@ -76,6 +82,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         args.cut_symbols,
         args.base_address.unwrap_or(0),
         args.load_mode.unwrap_or(0),
+        args.section_info,
         &objects,
         &input_names,
         &summaries,
@@ -120,6 +127,156 @@ fn inject_define_symbols(
     objects.push(obj);
     summaries.push(sum);
     input_names.push("*DEFINE*".to_string());
+}
+
+fn inject_section_info_object(
+    objects: &mut Vec<ObjectFile>,
+    summaries: &mut Vec<ObjectSummary>,
+    input_names: &mut Vec<String>,
+) {
+    const SYS_INFO_LEN: u32 = 0x40;
+    let commands = vec![
+        Command::SourceFile {
+            size: 0,
+            name: b"*SYSTEM*".to_vec(),
+        },
+        Command::Header {
+            section: 0x01,
+            size: 0,
+            name: b"text".to_vec(),
+        },
+        Command::Header {
+            section: 0x02,
+            size: 0,
+            name: b"data".to_vec(),
+        },
+        Command::Header {
+            section: 0x03,
+            size: 0,
+            name: b"bss".to_vec(),
+        },
+        Command::Header {
+            section: 0x04,
+            size: 0,
+            name: b"stack".to_vec(),
+        },
+        Command::Header {
+            section: 0x05,
+            size: 0,
+            name: b"rdata".to_vec(),
+        },
+        Command::Header {
+            section: 0x06,
+            size: 0,
+            name: b"rbss".to_vec(),
+        },
+        Command::Header {
+            section: 0x07,
+            size: 0,
+            name: b"rstack".to_vec(),
+        },
+        Command::Header {
+            section: 0x08,
+            size: 0,
+            name: b"rldata".to_vec(),
+        },
+        Command::Header {
+            section: 0x09,
+            size: 0,
+            name: b"rlbss".to_vec(),
+        },
+        Command::Header {
+            section: 0x0a,
+            size: 0,
+            name: b"rlstack".to_vec(),
+        },
+        Command::DefineSymbol {
+            section: 0x02,
+            value: 0,
+            name: b"___size_info".to_vec(),
+        },
+        Command::DefineSymbol {
+            section: 0x00,
+            value: 0,
+            name: b"___rsize".to_vec(),
+        },
+        Command::ChangeSection { section: 0x02 },
+        Command::DefineSpace { size: SYS_INFO_LEN },
+        Command::End,
+    ];
+    let obj = ObjectFile {
+        commands,
+        scd_tail: Vec::new(),
+    };
+    let sum = resolve_object(&obj);
+    objects.insert(0, obj);
+    summaries.insert(0, sum);
+    input_names.insert(0, "*SYSTEM*".to_string());
+}
+
+fn update_section_info_rsize(summaries: &mut [ObjectSummary], layout: &crate::layout::LayoutPlan) {
+    use crate::resolver::SectionKind;
+    let rsize = layout
+        .total_size_by_section
+        .get(&SectionKind::RData)
+        .copied()
+        .unwrap_or(0)
+        .saturating_add(
+            layout
+                .total_size_by_section
+                .get(&SectionKind::RBss)
+                .copied()
+                .unwrap_or(0),
+        )
+        .saturating_add(
+            layout
+                .total_size_by_section
+                .get(&SectionKind::RCommon)
+                .copied()
+                .unwrap_or(0),
+        )
+        .saturating_add(
+            layout
+                .total_size_by_section
+                .get(&SectionKind::RStack)
+                .copied()
+                .unwrap_or(0),
+        )
+        .saturating_add(
+            layout
+                .total_size_by_section
+                .get(&SectionKind::RLData)
+                .copied()
+                .unwrap_or(0),
+        )
+        .saturating_add(
+            layout
+                .total_size_by_section
+                .get(&SectionKind::RLBss)
+                .copied()
+                .unwrap_or(0),
+        )
+        .saturating_add(
+            layout
+                .total_size_by_section
+                .get(&SectionKind::RLCommon)
+                .copied()
+                .unwrap_or(0),
+        )
+        .saturating_add(
+            layout
+                .total_size_by_section
+                .get(&SectionKind::RLStack)
+                .copied()
+                .unwrap_or(0),
+        );
+    for summary in summaries.iter_mut() {
+        for sym in &mut summary.symbols {
+            if sym.section == SectionKind::Abs && sym.name == b"___rsize" {
+                sym.value = rsize;
+            }
+        }
+    }
 }
 
 fn resolve_output_path(args: &Args, inputs: &[String]) -> String {
@@ -554,12 +711,14 @@ fn resolve_gnu_long_name(table: Option<&[u8]>, offset: usize) -> Option<String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        inject_define_symbols, is_ar_archive, load_objects_with_requests, parse_ar_members, resolve_map_output,
-        resolve_output_path, run, select_archive_members, validate_unresolved_symbols,
+        inject_define_symbols, inject_section_info_object, is_ar_archive, load_objects_with_requests,
+        parse_ar_members, resolve_map_output, resolve_output_path, run, select_archive_members,
+        update_section_info_rsize, validate_unresolved_symbols,
     };
     use crate::cli::{Args, DefineArg};
-    use crate::format::obj::parse_object;
-    use crate::resolver::resolve_object;
+    use crate::layout::plan_layout;
+    use crate::format::obj::{Command, ObjectFile, parse_object};
+    use crate::resolver::{SectionKind, resolve_object};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1199,5 +1358,58 @@ mod tests {
         assert_eq!(summaries[0].symbols.len(), 1);
         assert_eq!(summaries[0].symbols[0].name, b"_FOO".to_vec());
         assert_eq!(summaries[0].symbols[0].value, 0x1234);
+    }
+
+    #[test]
+    fn injects_section_info_system_object() {
+        let mut objects = Vec::new();
+        let mut summaries = Vec::new();
+        let mut names = Vec::new();
+        inject_section_info_object(&mut objects, &mut summaries, &mut names);
+        assert_eq!(objects.len(), 1);
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(names, vec!["*SYSTEM*"]);
+        assert!(summaries[0]
+            .symbols
+            .iter()
+            .any(|s| s.name == b"___size_info" && s.section == SectionKind::Data));
+        assert!(summaries[0]
+            .symbols
+            .iter()
+            .any(|s| s.name == b"___rsize" && s.section == SectionKind::Abs));
+    }
+
+    #[test]
+    fn updates_section_info_rsize_symbol_from_layout_totals() {
+        let mut objects = Vec::new();
+        let mut summaries = Vec::new();
+        let mut names = Vec::new();
+        inject_section_info_object(&mut objects, &mut summaries, &mut names);
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x05,
+                    size: 3,
+                    name: b"rdata".to_vec(),
+                },
+                Command::ChangeSection { section: 0x05 },
+                Command::RawData(vec![0xaa, 0xbb]),
+                Command::DefineSpace { size: 1 },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = resolve_object(&obj);
+        objects.push(obj);
+        summaries.push(sum);
+        let layout = plan_layout(&summaries);
+        update_section_info_rsize(&mut summaries, &layout);
+        let rsize = summaries[0]
+            .symbols
+            .iter()
+            .find(|s| s.name == b"___rsize")
+            .map(|s| s.value)
+            .expect("___rsize");
+        assert_eq!(rsize, 4);
     }
 }

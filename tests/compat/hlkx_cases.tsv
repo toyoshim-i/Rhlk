@@ -11,6 +11,7 @@ makemcs_not_mcs	--makemcs	xdef.o	mcs
 map_xdef	-p	xdef.o	x
 map_d32_adrs	-p	d32_adrs_main.o d32_adrs_abs.o	x
 d32_adrs	-	d32_adrs_main.o d32_adrs_abs.o	x
+secinfo	-s	xdef.o	x
 stack_under	-	stack_under.o	x
 stack_under_9200	-	stack_under_9200.o	x
 stack_under_9600	-	stack_under_9600.o	x
