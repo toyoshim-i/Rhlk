@@ -1740,6 +1740,10 @@ fn validate_unsupported_expression_commands(
         let mut current = SectionKind::Text;
         let mut cursor_by_section = BTreeMap::<SectionKind, u32>::new();
         let mut calc_stack = Vec::<ExprEntry>::new();
+        let mut has_ctor = false;
+        let mut has_dtor = false;
+        let mut has_doctor = false;
+        let mut has_dodtor = false;
         for cmd in &obj.commands {
             match cmd {
                 Command::ChangeSection { section } => {
@@ -1752,6 +1756,13 @@ fn validate_unsupported_expression_commands(
                     bump_cursor(&mut cursor_by_section, current, *size);
                 }
                 Command::Opaque { code, .. } => {
+                    match *code {
+                        0x4c01 => has_ctor = true,
+                        0x4d01 => has_dtor = true,
+                        0xe00c => has_doctor = true,
+                        0xe00d => has_dodtor = true,
+                        _ => {}
+                    }
                     let local = cursor_by_section.get(&current).copied().unwrap_or(0);
                     let messages = classify_expression_errors(
                         *code,
@@ -1769,6 +1780,12 @@ fn validate_unsupported_expression_commands(
                 }
                 _ => {}
             }
+        }
+        if has_ctor && !has_doctor {
+            diagnostics.push(format!(".doctor なしで .ctor が使われています in {obj_name}"));
+        }
+        if has_dtor && !has_dodtor {
+            diagnostics.push(format!(".dodtor なしで .dtor が使われています in {obj_name}"));
         }
     }
     if diagnostics.is_empty() {
@@ -3001,6 +3018,14 @@ mod tests {
                     name: b"text".to_vec(),
                 },
                 Command::Opaque {
+                    code: 0xe00c,
+                    payload: Vec::new(),
+                },
+                Command::Opaque {
+                    code: 0xe00d,
+                    payload: Vec::new(),
+                },
+                Command::Opaque {
                     code: 0x4c01,
                     payload: vec![0x00, 0x00, 0x00, 0x02],
                 },
@@ -3062,6 +3087,48 @@ mod tests {
         let layout = plan_layout(std::slice::from_ref(&sum));
         let err = build_x_image_with_options(&[obj], &[sum], &layout, false).expect_err("must fail");
         assert!(err.to_string().contains("ctor table symbol is missing"));
+    }
+
+    #[test]
+    fn rejects_ctor_without_doctor_flag() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::Opaque {
+                    code: 0x4c01,
+                    payload: vec![0x00, 0x00, 0x00, 0x00],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)]).expect_err("must reject");
+        assert!(err.to_string().contains(".doctor なしで .ctor"));
+    }
+
+    #[test]
+    fn rejects_dtor_without_dodtor_flag() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::Opaque {
+                    code: 0x4d01,
+                    payload: vec![0x00, 0x00, 0x00, 0x00],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)]).expect_err("must reject");
+        assert!(err.to_string().contains(".dodtor なしで .dtor"));
     }
 
     #[test]
