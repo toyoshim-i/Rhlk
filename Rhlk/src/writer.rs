@@ -431,6 +431,7 @@ fn build_x_image_with_options(
         layout,
         &global_symbol_addrs,
     )?;
+    patch_ctor_dtor_tables(&mut linked, objects, layout, &global_symbol_addrs, text_size)?;
 
     let text = linked.get(&SectionKind::Text).cloned().unwrap_or_default();
     let data = linked.get(&SectionKind::Data).cloned().unwrap_or_default();
@@ -1322,12 +1323,6 @@ fn patch_opaque_commands(
                 Command::Opaque { code, payload } => {
                     let hi = (*code >> 8) as u8;
                     let lo = *code as u8;
-                    if matches!(hi, 0x4c | 0x4d) {
-                        bail!(
-                            "ctor/dtor command is not supported yet: {:#06x}",
-                            code
-                        );
-                    }
                     if hi == 0x80 {
                         if let Some(entry) =
                             evaluate_push_80_for_patch(lo, payload, summary, global_symbol_addrs)
@@ -1370,6 +1365,97 @@ fn patch_opaque_commands(
             }
         }
     }
+    Ok(())
+}
+
+fn patch_ctor_dtor_tables(
+    linked: &mut BTreeMap<SectionKind, Vec<u8>>,
+    objects: &[ObjectFile],
+    layout: &LayoutPlan,
+    global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
+    text_size: u32,
+) -> Result<()> {
+    const CTOR_LIST: &[u8] = b"___CTOR_LIST__";
+    const DTOR_LIST: &[u8] = b"___DTOR_LIST__";
+
+    let mut ctor_entries = Vec::<u32>::new();
+    let mut dtor_entries = Vec::<u32>::new();
+    for (idx, obj) in objects.iter().enumerate() {
+        let text_base = layout.placements[idx]
+            .by_section
+            .get(&SectionKind::Text)
+            .copied()
+            .unwrap_or(0);
+        for cmd in &obj.commands {
+            let Command::Opaque { code, payload } = cmd else {
+                continue;
+            };
+            let Some(v) = read_u32_be(payload) else {
+                continue;
+            };
+            match *code {
+                0x4c01 => ctor_entries.push(text_base.saturating_add(v)),
+                0x4d01 => dtor_entries.push(text_base.saturating_add(v)),
+                _ => {}
+            }
+        }
+    }
+
+    if !ctor_entries.is_empty() {
+        let Some(base) = global_symbol_addrs.get(CTOR_LIST) else {
+            bail!("ctor table symbol is missing: ___CTOR_LIST__");
+        };
+        let table = build_ctor_dtor_table(&ctor_entries);
+        write_table_at_absolute(linked, text_size, base.addr, &table)?;
+    }
+    if !dtor_entries.is_empty() {
+        let Some(base) = global_symbol_addrs.get(DTOR_LIST) else {
+            bail!("dtor table symbol is missing: ___DTOR_LIST__");
+        };
+        let table = build_ctor_dtor_table(&dtor_entries);
+        write_table_at_absolute(linked, text_size, base.addr, &table)?;
+    }
+    Ok(())
+}
+
+fn build_ctor_dtor_table(entries: &[u32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + entries.len() * 4);
+    out.extend_from_slice(&0xffff_ffffu32.to_be_bytes());
+    for v in entries {
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    out.extend_from_slice(&0u32.to_be_bytes());
+    out
+}
+
+fn write_table_at_absolute(
+    linked: &mut BTreeMap<SectionKind, Vec<u8>>,
+    text_size: u32,
+    addr: u32,
+    table: &[u8],
+) -> Result<()> {
+    if addr < text_size {
+        let target = linked
+            .get_mut(&SectionKind::Text)
+            .ok_or_else(|| anyhow::anyhow!("text section is missing while writing ctor/dtor table"))?;
+        let begin = addr as usize;
+        let end = begin.saturating_add(table.len());
+        if end > target.len() {
+            bail!("ctor/dtor table overflows text section");
+        }
+        target[begin..end].copy_from_slice(table);
+        return Ok(());
+    }
+
+    let target = linked
+        .get_mut(&SectionKind::Data)
+        .ok_or_else(|| anyhow::anyhow!("data section is missing while writing ctor/dtor table"))?;
+    let begin = addr.saturating_sub(text_size) as usize;
+    let end = begin.saturating_add(table.len());
+    if end > target.len() {
+        bail!("ctor/dtor table overflows data section");
+    }
+    target[begin..end].copy_from_slice(table);
     Ok(())
 }
 
@@ -1650,11 +1736,6 @@ fn validate_unsupported_expression_commands(
         let mut calc_stack = Vec::<ExprEntry>::new();
         for cmd in &obj.commands {
             match cmd {
-                Command::Header { section, .. } if matches!(*section, 0x0c | 0x0d) => {
-                    diagnostics.push(format!(
-                        "ctor/dtor section header is not supported yet in {obj_name}"
-                    ));
-                }
                 Command::ChangeSection { section } => {
                     current = SectionKind::from_u8(*section);
                 }
@@ -1712,7 +1793,6 @@ fn classify_expression_errors(
         _ => &[],
     };
     match hi {
-        0xe0 if matches!(lo, 0x0c | 0x0d) => vec![".doctor/.dodtor は未対応です"],
         0x80 => {
             if calc_stack.len() >= CALC_STACK_SIZE_HLK {
                 return vec!["計算用スタックが溢れました"];
@@ -1737,7 +1817,6 @@ fn classify_expression_errors(
         0x65 => evaluate_rel_word(lo, payload, summary, global_symbols),
         0x6a => evaluate_d32_adrs(lo, payload, summary, global_symbols),
         0x6b => evaluate_rel_byte(lo, payload, summary, global_symbols),
-        0x4c | 0x4d => vec![".ctor/.dtor は未対応です"],
         _ => Vec::new(),
     }
 }
@@ -2302,6 +2381,13 @@ fn read_i32_be(bytes: &[u8]) -> Option<i32> {
         return None;
     }
     Some(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn read_u32_be(bytes: &[u8]) -> Option<u32> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
 fn fits_byte(v: i32) -> bool {
@@ -2870,29 +2956,87 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unimplemented_ctor_dtor_commands() {
-        let obj = ObjectFile {
+    fn patches_ctor_dtor_tables_from_opaque_commands() {
+        let sys = ObjectFile {
             commands: vec![
                 Command::Header {
                     section: 0x01,
-                    size: 0,
+                    size: 2,
                     name: b"text".to_vec(),
                 },
-                Command::Opaque {
-                    code: 0x4c01,
-                    payload: vec![0, 0, 0, 0],
+                Command::Header {
+                    section: 0x02,
+                    size: 32,
+                    name: b"data".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0x4e, 0x75]),
+                Command::ChangeSection { section: 0x02 },
+                Command::RawData(vec![0; 32]),
+                Command::DefineSymbol {
+                    section: 0x02,
+                    value: 4,
+                    name: b"___CTOR_LIST__".to_vec(),
+                },
+                Command::DefineSymbol {
+                    section: 0x02,
+                    value: 16,
+                    name: b"___DTOR_LIST__".to_vec(),
                 },
                 Command::End,
             ],
             scd_tail: Vec::new(),
         };
-        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)])
-            .expect_err("must reject ctor/dtor command");
-        assert!(err.to_string().contains(".ctor/.dtor は未対応です"));
+        let app = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 6,
+                    name: b"text".to_vec(),
+                },
+                Command::Opaque {
+                    code: 0x4c01,
+                    payload: vec![0x00, 0x00, 0x00, 0x02],
+                },
+                Command::Opaque {
+                    code: 0x4d01,
+                    payload: vec![0x00, 0x00, 0x00, 0x04],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+
+        let mut sum0 = mk_summary(2, 2, 32);
+        sum0.symbols.push(Symbol {
+            name: b"___CTOR_LIST__".to_vec(),
+            section: SectionKind::Data,
+            value: 4,
+        });
+        sum0.symbols.push(Symbol {
+            name: b"___DTOR_LIST__".to_vec(),
+            section: SectionKind::Data,
+            value: 16,
+        });
+        let sum1 = mk_summary(2, 6, 0);
+        let layout = plan_layout(&[sum0.clone(), sum1.clone()]);
+        let image = build_x_image_with_options(&[sys.clone(), app], &[sum0, sum1], &layout, false)
+            .expect("x image");
+        let data_pos = 64 + 8;
+        // ctor table at data+4: -1, entry(text+2), 0
+        assert_eq!(
+            &image[data_pos + 4..data_pos + 16],
+            &[0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00]
+        );
+        // dtor table at data+16: -1, entry(text+4), 0
+        assert_eq!(
+            &image[data_pos + 16..data_pos + 28],
+            &[0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00]
+        );
     }
 
     #[test]
-    fn rejects_unimplemented_doctor_dodtor_commands() {
+    fn accepts_doctor_dodtor_commands_as_noop() {
         for code in [0xe00c, 0xe00d] {
             let obj = ObjectFile {
                 commands: vec![
@@ -2909,14 +3053,13 @@ mod tests {
                 ],
                 scd_tail: Vec::new(),
             };
-            let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)])
-                .expect_err("must reject doctor/dodtor command");
-            assert!(err.to_string().contains(".doctor/.dodtor は未対応です"));
+            validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)])
+                .expect("doctor/dodtor should be accepted as no-op");
         }
     }
 
     #[test]
-    fn rejects_unimplemented_ctor_dtor_section_headers() {
+    fn accepts_ctor_dtor_section_headers_as_noop() {
         for section in [0x0c, 0x0d] {
             let obj = ObjectFile {
                 commands: vec![
@@ -2933,11 +3076,8 @@ mod tests {
                 ],
                 scd_tail: Vec::new(),
             };
-            let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)])
-                .expect_err("must reject ctor/dtor section header");
-            assert!(err
-                .to_string()
-                .contains("ctor/dtor section header is not supported yet"));
+            validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)])
+                .expect("ctor/dtor section header should be accepted as no-op");
         }
     }
 
