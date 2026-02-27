@@ -1744,8 +1744,17 @@ fn validate_unsupported_expression_commands(
         let mut has_dtor = false;
         let mut has_doctor = false;
         let mut has_dodtor = false;
+        let mut ctor_count = 0usize;
+        let mut dtor_count = 0usize;
+        let mut ctor_header_size = None::<u32>;
+        let mut dtor_header_size = None::<u32>;
         for cmd in &obj.commands {
             match cmd {
+                Command::Header { section, size, .. } => match *section {
+                    0x0c => ctor_header_size = Some(*size),
+                    0x0d => dtor_header_size = Some(*size),
+                    _ => {}
+                },
                 Command::ChangeSection { section } => {
                     current = SectionKind::from_u8(*section);
                 }
@@ -1757,8 +1766,14 @@ fn validate_unsupported_expression_commands(
                 }
                 Command::Opaque { code, .. } => {
                     match *code {
-                        0x4c01 => has_ctor = true,
-                        0x4d01 => has_dtor = true,
+                        0x4c01 => {
+                            has_ctor = true;
+                            ctor_count += 1;
+                        }
+                        0x4d01 => {
+                            has_dtor = true;
+                            dtor_count += 1;
+                        }
                         0xe00c => has_doctor = true,
                         0xe00d => has_dodtor = true,
                         _ => {}
@@ -1786,6 +1801,22 @@ fn validate_unsupported_expression_commands(
         }
         if has_dtor && !has_dodtor {
             diagnostics.push(format!(".dodtor なしで .dtor が使われています in {obj_name}"));
+        }
+        if let Some(size) = ctor_header_size {
+            let expected = (ctor_count as u32).saturating_mul(4);
+            if size != expected {
+                diagnostics.push(format!(
+                    "ctor header size mismatch in {obj_name}: header={size} expected={expected}"
+                ));
+            }
+        }
+        if let Some(size) = dtor_header_size {
+            let expected = (dtor_count as u32).saturating_mul(4);
+            if size != expected {
+                diagnostics.push(format!(
+                    "dtor header size mismatch in {obj_name}: header={size} expected={expected}"
+                ));
+            }
         }
     }
     if diagnostics.is_empty() {
@@ -3132,6 +3163,66 @@ mod tests {
     }
 
     #[test]
+    fn rejects_ctor_header_size_mismatch() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::Header {
+                    section: 0x0c,
+                    size: 8, // should be 4 for one ctor
+                    name: b"ctor".to_vec(),
+                },
+                Command::Opaque {
+                    code: 0xe00c,
+                    payload: Vec::new(),
+                },
+                Command::Opaque {
+                    code: 0x4c01,
+                    payload: vec![0, 0, 0, 0],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)]).expect_err("must reject");
+        assert!(err.to_string().contains("ctor header size mismatch"));
+    }
+
+    #[test]
+    fn rejects_dtor_header_size_mismatch() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::Header {
+                    section: 0x0d,
+                    size: 0, // should be 4 for one dtor
+                    name: b"dtor".to_vec(),
+                },
+                Command::Opaque {
+                    code: 0xe00d,
+                    payload: Vec::new(),
+                },
+                Command::Opaque {
+                    code: 0x4d01,
+                    payload: vec![0, 0, 0, 0],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)]).expect_err("must reject");
+        assert!(err.to_string().contains("dtor header size mismatch"));
+    }
+
+    #[test]
     fn ctor_patch_rejects_table_overflow() {
         let obj0 = ObjectFile {
             commands: vec![
@@ -3257,7 +3348,7 @@ mod tests {
                 commands: vec![
                     Command::Header {
                         section,
-                        size: 4,
+                        size: 0,
                         name: if section == 0x0c {
                             b"ctor".to_vec()
                         } else {
