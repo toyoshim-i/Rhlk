@@ -17,12 +17,13 @@ pub fn write_output(
     base_address: u32,
     load_mode: u8,
     section_info: bool,
+    g2lk_mode: bool,
     objects: &[ObjectFile],
     input_paths: &[String],
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
 ) -> Result<()> {
-    validate_link_inputs(objects, input_paths, summaries)?;
+    validate_link_inputs(objects, input_paths, summaries, g2lk_mode)?;
 
     if r_format && !r_no_check {
         validate_r_convertibility(objects, summaries, layout, output_path)?;
@@ -1754,14 +1755,16 @@ fn validate_link_inputs(
     objects: &[ObjectFile],
     input_paths: &[String],
     summaries: &[ObjectSummary],
+    g2lk_mode: bool,
 ) -> Result<()> {
-    validate_unsupported_expression_commands(objects, input_paths, summaries)
+    validate_unsupported_expression_commands(objects, input_paths, summaries, g2lk_mode)
 }
 
 fn validate_unsupported_expression_commands(
     objects: &[ObjectFile],
     input_paths: &[String],
     summaries: &[ObjectSummary],
+    g2lk_mode: bool,
 ) -> Result<()> {
     let mut global_symbols = HashMap::<Vec<u8>, Symbol>::new();
     for summary in summaries {
@@ -1837,11 +1840,19 @@ fn validate_unsupported_expression_commands(
                 _ => {}
             }
         }
-        if has_ctor && !has_doctor {
-            diagnostics.push(format!(".doctor なしで .ctor が使われています in {obj_name}"));
-        }
-        if has_dtor && !has_dodtor {
-            diagnostics.push(format!(".dodtor なしで .dtor が使われています in {obj_name}"));
+        if !g2lk_mode {
+            if has_ctor || has_dtor || has_doctor || has_dodtor {
+                diagnostics.push(format!(
+                    "(do)ctor/dtor には -1 オプションの指定が必要です。 in {obj_name}"
+                ));
+            }
+        } else {
+            if has_ctor && !has_doctor {
+                diagnostics.push(format!(".doctor なしで .ctor が使われています in {obj_name}"));
+            }
+            if has_dtor && !has_dodtor {
+                diagnostics.push(format!(".dodtor なしで .dtor が使われています in {obj_name}"));
+            }
         }
         if let Some(size) = ctor_header_size {
             let expected = (ctor_count as u32).saturating_mul(4);
@@ -3106,7 +3117,7 @@ mod tests {
             scd_tail: Vec::new(),
         };
         let err =
-            validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)]).expect_err("must reject expression command");
+            validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)], true).expect_err("must reject expression command");
         assert!(err.to_string().contains("不正な式"));
     }
 
@@ -3238,7 +3249,7 @@ mod tests {
             ],
             scd_tail: Vec::new(),
         };
-        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)]).expect_err("must reject");
+        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)], true).expect_err("must reject");
         assert!(err.to_string().contains(".doctor なしで .ctor"));
     }
 
@@ -3259,7 +3270,7 @@ mod tests {
             ],
             scd_tail: Vec::new(),
         };
-        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)]).expect_err("must reject");
+        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)], true).expect_err("must reject");
         assert!(err.to_string().contains(".dodtor なしで .dtor"));
     }
 
@@ -3289,7 +3300,7 @@ mod tests {
             ],
             scd_tail: Vec::new(),
         };
-        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)]).expect_err("must reject");
+        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)], true).expect_err("must reject");
         assert!(err.to_string().contains("ctor header size mismatch"));
     }
 
@@ -3319,7 +3330,7 @@ mod tests {
             ],
             scd_tail: Vec::new(),
         };
-        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)]).expect_err("must reject");
+        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)], true).expect_err("must reject");
         assert!(err.to_string().contains("dtor header size mismatch"));
     }
 
@@ -3437,9 +3448,34 @@ mod tests {
                 ],
                 scd_tail: Vec::new(),
             };
-            validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)])
+            validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)], true)
                 .expect("doctor/dodtor should be accepted as no-op");
         }
+    }
+
+    #[test]
+    fn rejects_ctor_dtor_when_g2lk_is_off() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::Opaque {
+                    code: 0x4c01,
+                    payload: vec![0, 0, 0, 0],
+                },
+                Command::Opaque {
+                    code: 0xe00c,
+                    payload: Vec::new(),
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 4, 0)], false).expect_err("must reject");
+        assert!(err.to_string().contains("-1 オプション"));
     }
 
     #[test]
@@ -3460,7 +3496,7 @@ mod tests {
                 ],
                 scd_tail: Vec::new(),
             };
-            validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)])
+            validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)], true)
                 .expect("ctor/dtor section header should be accepted as no-op");
         }
     }

@@ -69,6 +69,24 @@ pub struct Args {
     #[arg(short = 'd', value_parser = parse_define_arg)]
     pub defines: Vec<DefineArg>,
 
+    #[arg(short = 'i')]
+    pub indirect_files: Vec<String>,
+
+    #[arg(short = 'L')]
+    pub lib_paths: Vec<String>,
+
+    #[arg(short = 'l')]
+    pub libs: Vec<String>,
+
+    #[arg(long = "use-env-lib")]
+    pub use_env_lib: bool,
+
+    #[arg(long = "g2lk-off")]
+    pub g2lk_off: bool,
+
+    #[arg(long = "g2lk-on")]
+    pub g2lk_on: bool,
+
     #[arg(long = "makemcs")]
     pub make_mcs: bool,
 

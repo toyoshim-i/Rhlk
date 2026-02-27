@@ -5,13 +5,11 @@ use crate::layout::plan_layout;
 use crate::resolver::resolve_object;
 use crate::resolver::ObjectSummary;
 use crate::writer::{write_map, write_output};
+use std::env;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 pub fn run(args: Args) -> anyhow::Result<()> {
-    if args.inputs.is_empty() {
-        anyhow::bail!("no input files")
-    }
     if args.title {
         println!("rhlk {}", env!("CARGO_PKG_VERSION"));
     }
@@ -21,7 +19,24 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         }
     }
 
-    let (objects, summaries, input_names) = load_objects_with_requests(&args.inputs, args.verbose)?;
+    let g2lk_mode = if args.g2lk_off {
+        false
+    } else if args.g2lk_on {
+        true
+    } else {
+        true
+    };
+
+    let mut expanded_inputs = args.inputs.clone();
+    for indirect in &args.indirect_files {
+        expanded_inputs.extend(load_indirect_inputs(indirect)?);
+    }
+    expanded_inputs.extend(resolve_lib_inputs(&args)?);
+    if expanded_inputs.is_empty() {
+        anyhow::bail!("no input files")
+    }
+
+    let (objects, summaries, input_names) = load_objects_with_requests(&expanded_inputs, args.verbose)?;
     let mut objects = objects;
     let mut summaries = summaries;
     let mut input_names = input_names;
@@ -72,7 +87,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
     }
 
     let effective_r = args.r_format || args.make_mcs;
-    let output = resolve_output_path(&args, &args.inputs);
+    let output = resolve_output_path(&args, &expanded_inputs);
     write_output(
         &output,
         effective_r,
@@ -83,6 +98,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         args.base_address.unwrap_or(0),
         args.load_mode.unwrap_or(0),
         args.section_info,
+        g2lk_mode,
         &objects,
         &input_names,
         &summaries,
@@ -91,7 +107,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
     if args.verbose {
         println!("wrote output: {output}");
     }
-    if let Some(map_output) = resolve_map_output(&args.map, &Some(output.clone()), &args.inputs) {
+    if let Some(map_output) = resolve_map_output(&args.map, &Some(output.clone()), &expanded_inputs) {
         write_map(&output, &map_output, &summaries, &layout, &input_names)?;
         if args.verbose {
             println!("wrote map: {map_output}");
@@ -102,6 +118,53 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         println!("rhlk: parsed {} input file(s)", input_names.len());
     }
     Ok(())
+}
+
+fn load_indirect_inputs(path: &str) -> anyhow::Result<Vec<String>> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|_| anyhow::anyhow!("ファイルがありません: {}", path))?;
+    Ok(text
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>())
+}
+
+fn resolve_lib_inputs(args: &Args) -> anyhow::Result<Vec<String>> {
+    let mut out = Vec::<String>::new();
+    if args.libs.is_empty() && !args.use_env_lib {
+        return Ok(out);
+    }
+    let mut search_paths = Vec::<PathBuf>::new();
+    for p in &args.lib_paths {
+        search_paths.push(PathBuf::from(p));
+    }
+    if args.use_env_lib {
+        if let Some(v) = env::var_os("LIB") {
+            search_paths.extend(env::split_paths(&v));
+        }
+    }
+    for lib in &args.libs {
+        let file = format!("lib{lib}.a");
+        let mut resolved = None::<PathBuf>;
+        for dir in &search_paths {
+            let c = dir.join(&file);
+            if c.exists() {
+                resolved = Some(c);
+                break;
+            }
+        }
+        if resolved.is_none() {
+            let c = PathBuf::from(&file);
+            if c.exists() {
+                resolved = Some(c);
+            }
+        }
+        let Some(path) = resolved else {
+            anyhow::bail!("ファイルがありません: {file}");
+        };
+        out.push(path.to_string_lossy().to_string());
+    }
+    Ok(out)
 }
 
 fn inject_define_symbols(
@@ -701,7 +764,8 @@ fn resolve_gnu_long_name(table: Option<&[u8]>, offset: usize) -> Option<String> 
 mod tests {
     use super::{
         inject_define_symbols, inject_section_info_object, is_ar_archive, load_objects_with_requests,
-        parse_ar_members, resolve_map_output, resolve_output_path, run, select_archive_members,
+        parse_ar_members, resolve_lib_inputs, resolve_map_output, resolve_output_path, run,
+        select_archive_members,
         update_section_info_rsize, validate_unresolved_symbols,
     };
     use crate::cli::{Args, DefineArg};
@@ -947,6 +1011,50 @@ mod tests {
         assert!(names.iter().any(|v| v.ends_with("libx.a(foo.o)")));
 
         let _ = fs::remove_file(main);
+        let _ = fs::remove_file(lib);
+        let _ = fs::remove_dir(dir);
+    }
+
+    #[test]
+    fn resolves_l_option_library_from_l_path() {
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rhlk-linker-test-{uniq}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let lib = dir.join("libfoo.a");
+        fs::write(&lib, make_simple_ar(&[("x.o", &[0x00, 0x00])])).expect("write lib");
+        let args = Args {
+            output: None,
+            r_format: false,
+            r_no_check: false,
+            no_x_ext: false,
+            opt_an: false,
+            align: None,
+            base_address: None,
+            load_mode: None,
+            defines: Vec::new(),
+            indirect_files: Vec::new(),
+            lib_paths: vec![dir.to_string_lossy().to_string()],
+            libs: vec!["foo".to_string()],
+            use_env_lib: false,
+            g2lk_off: false,
+            g2lk_on: false,
+            make_mcs: false,
+            omit_bss: false,
+            cut_symbols: false,
+            map: None,
+            verbose: false,
+            quiet: false,
+            warn_off: false,
+            title: false,
+            section_info: false,
+            inputs: vec![],
+        };
+        let libs = resolve_lib_inputs(&args).expect("resolve");
+        assert_eq!(libs.len(), 1);
+        assert_eq!(libs[0], lib.to_string_lossy());
         let _ = fs::remove_file(lib);
         let _ = fs::remove_dir(dir);
     }
@@ -1244,6 +1352,12 @@ mod tests {
             warn_off: false,
             title: false,
             section_info: false,
+            indirect_files: Vec::new(),
+            lib_paths: Vec::new(),
+            libs: Vec::new(),
+            use_env_lib: false,
+            g2lk_off: false,
+            g2lk_on: false,
             inputs: vec!["foo.o".to_string()],
         };
         assert_eq!(resolve_output_path(&args, &args.inputs), "foo.x");
@@ -1294,6 +1408,12 @@ mod tests {
             warn_off: false,
             title: false,
             section_info: false,
+            indirect_files: Vec::new(),
+            lib_paths: Vec::new(),
+            libs: Vec::new(),
+            use_env_lib: false,
+            g2lk_off: false,
+            g2lk_on: false,
             inputs: vec![input.to_string_lossy().to_string()],
         };
         run(args).expect("run");
@@ -1335,6 +1455,12 @@ mod tests {
             warn_off: false,
             title: false,
             section_info: false,
+            indirect_files: Vec::new(),
+            lib_paths: Vec::new(),
+            libs: Vec::new(),
+            use_env_lib: false,
+            g2lk_off: false,
+            g2lk_on: false,
             inputs: vec![input.to_string_lossy().to_string()],
         };
         run(args).expect("run");
@@ -1366,6 +1492,12 @@ mod tests {
             warn_off: false,
             title: false,
             section_info: false,
+            indirect_files: Vec::new(),
+            lib_paths: Vec::new(),
+            libs: Vec::new(),
+            use_env_lib: false,
+            g2lk_off: false,
+            g2lk_on: false,
             inputs: vec!["foo.o".to_string()],
         };
         let err = run(args).expect_err("must reject invalid align");
@@ -1396,6 +1528,12 @@ mod tests {
             warn_off: false,
             title: false,
             section_info: false,
+            indirect_files: Vec::new(),
+            lib_paths: Vec::new(),
+            libs: Vec::new(),
+            use_env_lib: false,
+            g2lk_off: false,
+            g2lk_on: false,
             inputs: vec!["in.o".to_string()],
         };
         let mut objects = Vec::new();
