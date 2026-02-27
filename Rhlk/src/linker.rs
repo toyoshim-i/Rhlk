@@ -519,34 +519,23 @@ fn enqueue_requests(
 
 fn resolve_requested_path(base_dir: &Path, req_name: &str) -> Option<PathBuf> {
     let req = Path::new(req_name);
-    if req.is_absolute() {
-        if req.exists() {
-            return Some(req.to_path_buf());
-        }
-        for ext in ["o", "obj"] {
-            let c = req.with_extension(ext);
-            if c.exists() {
-                return Some(c);
+    let mut candidates = Vec::<PathBuf>::new();
+    let mut add_candidates = |base: PathBuf| {
+        candidates.push(base.clone());
+        // For extension-less request names, try common object/library suffixes.
+        if base.extension().is_none() {
+            for ext in ["o", "obj", "a", "lib"] {
+                candidates.push(base.with_extension(ext));
             }
         }
-        return None;
+    };
+    if req.is_absolute() {
+        add_candidates(req.to_path_buf());
+    } else {
+        add_candidates(base_dir.join(req));
+        add_candidates(PathBuf::from(req));
     }
-    let c1 = base_dir.join(req);
-    if c1.exists() {
-        return Some(c1);
-    }
-    for ext in ["o", "obj"] {
-        let c = base_dir.join(req).with_extension(ext);
-        if c.exists() {
-            return Some(c);
-        }
-    }
-    let c2 = PathBuf::from(req);
-    if c2.exists() {
-        return Some(c2);
-    }
-    for ext in ["o", "obj"] {
-        let c = PathBuf::from(req).with_extension(ext);
+    for c in candidates {
         if c.exists() {
             return Some(c);
         }
@@ -935,6 +924,67 @@ mod tests {
         let _ = fs::remove_file(main);
         let _ = fs::remove_file(sub);
         let _ = fs::remove_dir(dir);
+    }
+
+    #[test]
+    fn resolves_requested_archive_with_a_extension() {
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rhlk-linker-test-{uniq}"));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let main = dir.join("main.o");
+        let lib = dir.join("libx.a");
+
+        fs::write(&main, obj_with_xref_and_request("foo", "libx")).expect("write main");
+        let ar = make_simple_ar(&[("foo.o", &obj_with_def("foo"))]);
+        fs::write(&lib, ar).expect("write lib");
+
+        let inputs = vec![main.to_string_lossy().to_string()];
+        let (_, sums, names) = load_objects_with_requests(&inputs, false).expect("load");
+        validate_unresolved_symbols(&sums, &names).expect("resolved");
+        assert!(names.iter().any(|v| v.ends_with("libx.a(foo.o)")));
+
+        let _ = fs::remove_file(main);
+        let _ = fs::remove_file(lib);
+        let _ = fs::remove_dir(dir);
+    }
+
+    #[test]
+    fn request_resolution_prefers_input_base_dir_over_cwd() {
+        let uniq = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("rhlk-linker-test-{uniq}"));
+        let dir_input = root.join("input");
+        let dir_cwd = root.join("cwd");
+        fs::create_dir_all(&dir_input).expect("mkdir input");
+        fs::create_dir_all(&dir_cwd).expect("mkdir cwd");
+
+        let main = dir_input.join("main.o");
+        let sub_input = dir_input.join("sub.o");
+        let sub_cwd = dir_cwd.join("sub.o");
+        fs::write(&main, [0xe0, 0x01, b's', b'u', b'b', 0x00, 0x00, 0x00]).expect("write main");
+        fs::write(&sub_input, [0x00, 0x00]).expect("write sub input");
+        fs::write(&sub_cwd, [0x00, 0x00]).expect("write sub cwd");
+
+        let prev = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(&dir_cwd).expect("chdir");
+        let inputs = vec![main.to_string_lossy().to_string()];
+        let (_, _, names) = load_objects_with_requests(&inputs, false).expect("load");
+        std::env::set_current_dir(prev).expect("restore cwd");
+
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[1], sub_input.to_string_lossy());
+
+        let _ = fs::remove_file(main);
+        let _ = fs::remove_file(sub_input);
+        let _ = fs::remove_file(sub_cwd);
+        let _ = fs::remove_dir(&dir_input);
+        let _ = fs::remove_dir(&dir_cwd);
+        let _ = fs::remove_dir(root);
     }
 
     #[test]
