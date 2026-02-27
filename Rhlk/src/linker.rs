@@ -674,6 +674,26 @@ mod tests {
     }
 
     #[test]
+    fn rescans_archive_from_head_after_new_unresolved() {
+        let main_bytes = obj_with_xref_and_request("foo", "libx.a");
+        let main = parse_object(&main_bytes).expect("main parse");
+        let main_sum = resolve_object(&main);
+
+        // bar member appears first, but is not needed until foo member is selected.
+        let bar_obj = parse_object(&obj_with_def("bar")).expect("bar parse");
+        let bar_sum = resolve_object(&bar_obj);
+        let foo_obj = parse_object(&obj_with_def_and_xref("foo", "bar")).expect("foo parse");
+        let foo_sum = resolve_object(&foo_obj);
+
+        let members = vec![
+            ("bar.o".to_string(), bar_obj, bar_sum),
+            ("foo.o".to_string(), foo_obj, foo_sum),
+        ];
+        let picked = select_archive_members(&[main_sum], &members);
+        assert_eq!(picked, vec![1, 0]);
+    }
+
+    #[test]
     fn reports_unresolved_symbols_after_expansion() {
         let main = parse_object(&obj_with_xref_and_request("foo", "libx.a")).expect("main parse");
         let main_sum = resolve_object(&main);
