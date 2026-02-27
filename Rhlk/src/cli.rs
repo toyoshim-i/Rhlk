@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::ffi::OsString;
 
 #[derive(Debug, Clone)]
 pub struct DefineArg {
@@ -37,6 +38,63 @@ fn parse_define_arg(input: &str) -> Result<DefineArg, String> {
         name: name.to_string(),
         value,
     })
+}
+
+fn normalize_argv_from_iter<I>(args: I) -> Vec<OsString>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut argv = Vec::new();
+    for arg in args {
+        if arg == "-an" {
+            argv.push("--an".into());
+            continue;
+        }
+        if arg == "-rn" {
+            argv.push("--rn".into());
+            continue;
+        }
+        if arg == "-0" {
+            argv.push("--g2lk-off".into());
+            continue;
+        }
+        if arg == "-1" {
+            argv.push("--g2lk-on".into());
+            continue;
+        }
+        if arg == "-l" {
+            argv.push("--use-env-lib".into());
+            continue;
+        }
+        if let Some(s) = arg.to_str() {
+            if s.starts_with("-l") && s.len() > 2 && !s.starts_with("--") {
+                argv.push("-l".into());
+                argv.push(s[2..].into());
+                continue;
+            }
+        }
+        argv.push(arg);
+    }
+    argv
+}
+
+pub fn normalize_argv() -> Vec<OsString> {
+    normalize_argv_from_iter(std::env::args_os())
+}
+
+pub fn finalize_compat_args(args: &mut Args, argv: &[OsString]) -> Result<(), String> {
+    if args.g2lk_off && args.g2lk_on {
+        return Err("--g2lk-off and --g2lk-on are mutually exclusive".to_string());
+    }
+    let verbose_last = argv.iter().rposition(|a| a == "-v" || a == "--verbose");
+    let quiet_last = argv.iter().rposition(|a| a == "-z" || a == "--quiet");
+    args.verbose = match (verbose_last, quiet_last) {
+        (Some(v), Some(z)) => v > z,
+        (Some(_), None) => true,
+        (None, Some(_)) => false,
+        (None, None) => false,
+    };
+    Ok(())
 }
 
 #[derive(Debug, Parser)]
@@ -116,4 +174,63 @@ pub struct Args {
 
     #[arg(value_name = "INPUT")]
     pub inputs: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Args, finalize_compat_args, normalize_argv_from_iter};
+    use clap::Parser;
+    use std::ffi::OsString;
+
+    #[test]
+    fn finalizes_verbose_by_last_switch() {
+        let argv = vec![
+            OsString::from("rhlk"),
+            OsString::from("-v"),
+            OsString::from("-z"),
+        ];
+        let mut args = Args::parse_from(argv.iter().cloned());
+        finalize_compat_args(&mut args, &argv).expect("finalize");
+        assert!(!args.verbose);
+
+        let argv2 = vec![
+            OsString::from("rhlk"),
+            OsString::from("--quiet"),
+            OsString::from("--verbose"),
+        ];
+        let mut args2 = Args::parse_from(argv2.iter().cloned());
+        finalize_compat_args(&mut args2, &argv2).expect("finalize");
+        assert!(args2.verbose);
+    }
+
+    #[test]
+    fn rejects_mutually_exclusive_g2lk_switches() {
+        let argv = vec![
+            OsString::from("rhlk"),
+            OsString::from("--g2lk-off"),
+            OsString::from("--g2lk-on"),
+        ];
+        let mut args = Args::parse_from(argv.iter().cloned());
+        let err = finalize_compat_args(&mut args, &argv).expect_err("must fail");
+        assert!(err.contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn normalizes_short_l_attached_form() {
+        let argv = vec![
+            OsString::from("rhlk"),
+            OsString::from("-lfoo"),
+            OsString::from("main.o"),
+        ];
+        let out = normalize_argv_from_iter(argv);
+        assert_eq!(
+            out,
+            vec![
+                OsString::from("rhlk"),
+                OsString::from("-l"),
+                OsString::from("foo"),
+                OsString::from("main.o"),
+            ]
+        );
+    }
 }
