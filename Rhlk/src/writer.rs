@@ -160,6 +160,7 @@ fn apply_x_header_options(payload: &mut [u8], base_address: u32, load_mode: u8) 
 }
 
 pub fn write_map(
+    exec_output_path: &str,
     output_path: &str,
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
@@ -186,6 +187,7 @@ pub fn write_map(
         .copied()
         .unwrap_or(0);
     let text = build_map_text(
+        exec_output_path,
         summaries,
         layout,
         text_size,
@@ -199,6 +201,7 @@ pub fn write_map(
 }
 
 fn build_map_text(
+    exec_output_path: &str,
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
     text_size: u32,
@@ -207,7 +210,6 @@ fn build_map_text(
     common_only: u32,
     input_paths: &[String],
 ) -> String {
-    let addrs = build_global_symbol_addrs(summaries, layout, text_size, data_size, bss_only, common_only);
     let bss_size = bss_only
         .saturating_add(common_only)
         .saturating_add(section_total(layout, SectionKind::Stack));
@@ -215,18 +217,12 @@ fn build_map_text(
         .ok()
         .flatten()
         .unwrap_or(0);
-    let mut rows = Vec::<(u32, SectionKind, String)>::new();
-    for (name_bytes, sym) in addrs {
-        let name = String::from_utf8_lossy(&name_bytes).to_string();
-        rows.push((sym.addr, sym.section, name));
-    }
-    rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
-    let xrefs = collect_xrefs_with_owner(summaries, input_paths);
     let mut out = String::new();
     out.push_str("==========================================================\n");
-    out.push_str("rhlk map\n");
+    out.push_str(exec_output_path);
+    out.push('\n');
     out.push_str("==========================================================\n");
-    out.push_str(&format_section_line("exec", exec, 1));
+    out.push_str(&format_exec_line(exec));
     let text_sz = section_total(layout, SectionKind::Text);
     let data_sz = section_total(layout, SectionKind::Data);
     let bss_sz = section_total(layout, SectionKind::Bss);
@@ -259,43 +255,6 @@ fn build_map_text(
         rcur = rcur.saturating_add(sz);
     }
 
-    out.push_str("-------------------------- xref --------------------------\n");
-    for (name, owner) in xrefs {
-        out.push_str(&format!("{name:<24} : in {owner}\n"));
-    }
-
-    out.push_str("-------------------------- xdef --------------------------\n");
-    for (addr, sect, name) in &rows {
-        if matches!(sect, SectionKind::Common | SectionKind::RCommon | SectionKind::RLCommon) {
-            continue;
-        }
-        out.push_str(&format_symbol_line(name, *addr, section_tag(*sect)));
-    }
-
-    out.push_str("-------------------------- comm --------------------------\n");
-    for (addr, sect, name) in &rows {
-        if *sect != SectionKind::Common {
-            continue;
-        }
-        out.push_str(&format_symbol_line(name, *addr, section_tag(*sect)));
-    }
-
-    out.push_str("-------------------------- rcomm -------------------------\n");
-    for (addr, sect, name) in &rows {
-        if *sect != SectionKind::RCommon {
-            continue;
-        }
-        out.push_str(&format_symbol_line(name, *addr, section_tag(*sect)));
-    }
-
-    out.push_str("-------------------------- rlcomm ------------------------\n");
-    for (addr, sect, name) in &rows {
-        if *sect != SectionKind::RLCommon {
-            continue;
-        }
-        out.push_str(&format_symbol_line(name, *addr, section_tag(*sect)));
-    }
-
     let def_owner = build_definition_owner_map(summaries, input_paths);
     for (idx, summary) in summaries.iter().enumerate() {
         out.push_str("\n\n");
@@ -315,14 +274,6 @@ fn build_map_text(
             ("data", SectionKind::Data),
             ("bss", SectionKind::Bss),
             ("stack", SectionKind::Stack),
-            ("rdata", SectionKind::RData),
-            ("rbss", SectionKind::RBss),
-            ("rcommon", SectionKind::RCommon),
-            ("rstack", SectionKind::RStack),
-            ("rldata", SectionKind::RLData),
-            ("rlbss", SectionKind::RLBss),
-            ("rlcommon", SectionKind::RLCommon),
-            ("rlstack", SectionKind::RLStack),
         ] {
             let pos = placement.get(&kind).copied().unwrap_or(0);
             let size = summary
@@ -347,7 +298,9 @@ fn build_map_text(
         }
         if !summary.symbols.is_empty() {
             out.push_str("-------------------------- xdef --------------------------\n");
-            for sym in &summary.symbols {
+            let mut syms = summary.symbols.iter().collect::<Vec<_>>();
+            syms.sort_by(|a, b| a.name.cmp(&b.name).then(a.value.cmp(&b.value)));
+            for sym in syms {
                 let n = String::from_utf8_lossy(&sym.name);
                 out.push_str(&format_symbol_line(&n, sym.value, section_tag(sym.section)));
             }
@@ -380,32 +333,12 @@ fn display_obj_name(path: Option<&String>, idx: usize) -> String {
     format!("obj{idx}")
 }
 
-fn collect_xrefs_with_owner(summaries: &[ObjectSummary], input_paths: &[String]) -> Vec<(String, String)> {
-    let mut set = HashSet::<Vec<u8>>::new();
-    for s in summaries {
-        for xr in &s.xrefs {
-            set.insert(xr.name.clone());
-        }
-    }
-    let mut out: Vec<(String, String)> = set
-        .into_iter()
-        .map(|v| {
-            let name = String::from_utf8_lossy(&v).to_string();
-            let owner = summaries
-                .iter()
-                .enumerate()
-                .find(|(_, s)| s.symbols.iter().any(|sym| sym.name == v))
-                .and_then(|(idx, _)| input_paths.get(idx).cloned())
-                .unwrap_or_else(|| "<unknown>".to_string());
-            (name, owner)
-        })
-        .collect();
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
-}
-
 fn format_symbol_line(name: &str, addr: u32, sect: &str) -> String {
     format!("{name:<24} : {addr:08X} ({sect:<7})\n")
+}
+
+fn format_exec_line(exec: u32) -> String {
+    format!("{:<24} : {exec:08X}\n", "exec")
 }
 
 fn format_align_line(align: u32) -> String {
@@ -433,22 +366,22 @@ fn section_total(layout: &LayoutPlan, section: SectionKind) -> u32 {
 
 fn section_tag(section: SectionKind) -> &'static str {
     match section {
-        SectionKind::Abs => "ABS",
-        SectionKind::Text => "TEXT",
-        SectionKind::Data => "DATA",
-        SectionKind::Bss => "BSS",
-        SectionKind::Stack => "STACK",
-        SectionKind::RData => "RDATA",
-        SectionKind::RBss => "RBSS",
-        SectionKind::RStack => "RSTACK",
-        SectionKind::RLData => "RLDATA",
-        SectionKind::RLBss => "RLBSS",
-        SectionKind::RLStack => "RLSTACK",
-        SectionKind::Common => "COMMON",
-        SectionKind::RCommon => "RCOMMON",
-        SectionKind::RLCommon => "RLCOMMON",
-        SectionKind::Xref => "XREF",
-        SectionKind::Unknown(_) => "UNKNOWN",
+        SectionKind::Abs => "abs",
+        SectionKind::Text => "text",
+        SectionKind::Data => "data",
+        SectionKind::Bss => "bss",
+        SectionKind::Stack => "stack",
+        SectionKind::RData => "rdata",
+        SectionKind::RBss => "rbss",
+        SectionKind::RStack => "rstack",
+        SectionKind::RLData => "rldata",
+        SectionKind::RLBss => "rlbss",
+        SectionKind::RLStack => "rlstack",
+        SectionKind::Common => "common",
+        SectionKind::RCommon => "rcommon",
+        SectionKind::RLCommon => "rlcommon",
+        SectionKind::Xref => "xref",
+        SectionKind::Unknown(_) => "unknown",
     }
 }
 
@@ -2837,18 +2770,15 @@ mod tests {
             value: 1,
         });
         let layout = plan_layout(&[s0.clone(), s1.clone()]);
-        let text = build_map_text(&[s0, s1], &layout, 4, 2, 0, 0, &[]);
+        let text = build_map_text("a.x", &[s0, s1], &layout, 4, 2, 0, 0, &[]);
         assert!(text.contains("=========================================================="));
-        assert!(text.contains("exec                     : 00000000 - 00000000 (00000001)"));
+        assert!(text.contains("a.x"));
+        assert!(text.contains("exec                     : 00000000"));
         assert!(text.contains("text                     : 00000000 - 00000003 (00000004)"));
         assert!(text.contains("data                     : 00000004 - 00000005 (00000002)"));
-        assert!(text.contains("-------------------------- xref --------------------------"));
         assert!(text.contains("-------------------------- xdef --------------------------"));
-        assert!(text.contains("-------------------------- comm --------------------------"));
-        assert!(text.contains("-------------------------- rcomm -------------------------"));
-        assert!(text.contains("-------------------------- rlcomm ------------------------"));
-        assert!(text.contains("_text0                   : 00000000 (TEXT   )"));
-        assert!(text.contains("_data0                   : 00000005 (DATA   )"));
+        assert!(text.contains("_text0                   : 00000000 (text   )"));
+        assert!(text.contains("_data0                   : 00000001 (data   )"));
         assert!(text.contains("obj0"));
         assert!(text.contains("align                    : 00000002"));
     }

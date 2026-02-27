@@ -92,7 +92,7 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         println!("wrote output: {output}");
     }
     if let Some(map_output) = resolve_map_output(&args.map, &Some(output.clone()), &args.inputs) {
-        write_map(&map_output, &summaries, &layout, &input_names)?;
+        write_map(&output, &map_output, &summaries, &layout, &input_names)?;
         if args.verbose {
             println!("wrote map: {map_output}");
         }
