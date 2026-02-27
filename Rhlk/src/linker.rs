@@ -234,6 +234,7 @@ fn parse_ar_members(bytes: &[u8]) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
         anyhow::bail!("not ar archive");
     }
     let mut out = Vec::new();
+    let mut gnu_long_names: Option<Vec<u8>> = None;
     let mut pos = 8usize;
     while pos < bytes.len() {
         if bytes.len().saturating_sub(pos) < 60 {
@@ -249,36 +250,66 @@ fn parse_ar_members(bytes: &[u8]) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
         if bytes.len().saturating_sub(pos) < size {
             anyhow::bail!("invalid ar member size");
         }
-        let mut raw_name = std::str::from_utf8(&hdr[0..16])?.trim().to_string();
+        let raw_name = std::str::from_utf8(&hdr[0..16])?.trim().to_string();
         let mut data = bytes[pos..pos + size].to_vec();
         pos += size;
         if pos % 2 == 1 {
             pos = pos.saturating_add(1);
         }
 
-        if raw_name == "/" || raw_name == "//" {
+        if raw_name == "/" {
             continue;
         }
-        if raw_name.ends_with('/') {
-            raw_name.pop();
+        if raw_name == "//" {
+            gnu_long_names = Some(data);
+            continue;
         }
         if let Some(rest) = raw_name.strip_prefix("#1/") {
             let n = rest.parse::<usize>()?;
             if data.len() < n {
                 anyhow::bail!("invalid BSD ar extended name");
             }
-            let name = String::from_utf8_lossy(&data[..n]).to_string();
+            let name = trim_member_name(&String::from_utf8_lossy(&data[..n]));
             data = data[n..].to_vec();
             out.push((name, data));
             continue;
         }
-        if raw_name.starts_with('/') {
-            // GNU long-name table references are not supported yet.
+        if let Some(rest) = raw_name.strip_prefix('/') {
+            if let Ok(offset) = rest.parse::<usize>() {
+                if let Some(name) = resolve_gnu_long_name(gnu_long_names.as_deref(), offset) {
+                    out.push((name, data));
+                    continue;
+                }
+            }
             continue;
         }
-        out.push((raw_name, data));
+        out.push((trim_member_name(&raw_name), data));
     }
     Ok(out)
+}
+
+fn trim_member_name(name: &str) -> String {
+    let mut n = name.trim().to_string();
+    if n.ends_with('/') {
+        n.pop();
+    }
+    n
+}
+
+fn resolve_gnu_long_name(table: Option<&[u8]>, offset: usize) -> Option<String> {
+    let t = table?;
+    if offset >= t.len() {
+        return None;
+    }
+    let mut end = offset;
+    while end < t.len() {
+        if t[end] == b'\n' {
+            break;
+        }
+        end += 1;
+    }
+    let raw = String::from_utf8_lossy(&t[offset..end]).to_string();
+    Some(trim_member_name(raw.trim_end_matches('/')))
 }
 
 #[cfg(test)]
@@ -308,6 +339,45 @@ mod tests {
             if data.len() % 2 == 1 {
                 out.push(b'\n');
             }
+        }
+        out
+    }
+
+    fn make_gnu_longname_ar(long_name: &str, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"!<arch>\n");
+        let mut long_table = Vec::new();
+        long_table.extend_from_slice(long_name.as_bytes());
+        long_table.extend_from_slice(b"/\n");
+
+        let mut long_name_header = String::from("//");
+        while long_name_header.len() < 16 {
+            long_name_header.push(' ');
+        }
+        let mut size_field = long_table.len().to_string();
+        while size_field.len() < 10 {
+            size_field.insert(0, ' ');
+        }
+        let header = format!("{long_name_header}{:>12}{:>6}{:>6}{:>8}{size_field}`\n", 0, 0, 0, 0);
+        out.extend_from_slice(header.as_bytes());
+        out.extend_from_slice(&long_table);
+        if long_table.len() % 2 == 1 {
+            out.push(b'\n');
+        }
+
+        let mut member_name = String::from("/0");
+        while member_name.len() < 16 {
+            member_name.push(' ');
+        }
+        let mut mem_size = payload.len().to_string();
+        while mem_size.len() < 10 {
+            mem_size.insert(0, ' ');
+        }
+        let header2 = format!("{member_name}{:>12}{:>6}{:>6}{:>8}{mem_size}`\n", 0, 0, 0, 0);
+        out.extend_from_slice(header2.as_bytes());
+        out.extend_from_slice(payload);
+        if payload.len() % 2 == 1 {
+            out.push(b'\n');
         }
         out
     }
@@ -422,5 +492,14 @@ mod tests {
         assert_eq!(members[0].1, vec![0x00, 0x00]);
         assert_eq!(members[1].0, "y.o");
         assert_eq!(members[1].1, vec![0x10, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn parses_gnu_longname_ar_members() {
+        let ar = make_gnu_longname_ar("very_long_name_member.o", &[0x00, 0x00]);
+        let members = parse_ar_members(&ar).expect("parse");
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].0, "very_long_name_member.o");
+        assert_eq!(members[0].1, vec![0x00, 0x00]);
     }
 }
