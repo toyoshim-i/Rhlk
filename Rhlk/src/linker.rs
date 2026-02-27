@@ -517,18 +517,6 @@ fn validate_unresolved_symbols(summaries: &[ObjectSummary], input_names: &[Strin
     anyhow::bail!("{}", messages.join("\n"));
 }
 
-#[cfg(test)]
-fn load_objects_with_requests(
-    initial_inputs: &[String],
-    verbose: bool,
-) -> anyhow::Result<(Vec<crate::format::obj::ObjectFile>, Vec<ObjectSummary>, Vec<String>)> {
-    let input_paths = initial_inputs
-        .iter()
-        .map(PathBuf::from)
-        .collect::<Vec<_>>();
-    load_objects_with_requests_paths(&input_paths, verbose)
-}
-
 fn load_objects_with_requests_paths(
     initial_inputs: &[PathBuf],
     verbose: bool,
@@ -868,7 +856,7 @@ fn resolve_gnu_long_name(table: Option<&[u8]>, offset: usize) -> Option<String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        inject_define_symbols, inject_section_info_object, is_ar_archive, load_objects_with_requests,
+        inject_define_symbols, inject_section_info_object, is_ar_archive, load_objects_with_requests_paths,
         parse_ar_members, resolve_lib_inputs, resolve_map_output, resolve_output_path, run,
         select_archive_members,
         update_section_info_rsize, validate_unresolved_symbols,
@@ -1039,8 +1027,8 @@ mod tests {
         // 0000(end)
         fs::write(&sub, [0x00, 0x00]).expect("write sub");
 
-        let inputs = vec![main.to_string_lossy().to_string()];
-        let (_, _, names) = load_objects_with_requests(&inputs, false).expect("load");
+        let inputs = vec![main.clone()];
+        let (_, _, names) = load_objects_with_requests_paths(&inputs, false).expect("load");
         assert_eq!(names.len(), 2);
         assert_eq!(names[0], main.to_string_lossy());
         assert!(names.iter().any(|v| v.ends_with("sub.o")));
@@ -1062,8 +1050,8 @@ mod tests {
         let main = dir.join("main.o");
         fs::write(&main, [0xe0, 0x01, b'n', b'o', b'n', b'e', b'.', b'o', 0x00, 0x00]).expect("write main");
 
-        let inputs = vec![main.to_string_lossy().to_string()];
-        let err = load_objects_with_requests(&inputs, false).expect_err("must fail");
+        let inputs = vec![main.clone()];
+        let err = load_objects_with_requests_paths(&inputs, false).expect_err("must fail");
         assert!(err.to_string().contains("ファイルがありません: none.o"));
 
         let _ = fs::remove_file(main);
@@ -1086,8 +1074,8 @@ mod tests {
         fs::write(&main, [0xe0, 0x01, b's', b'u', b'b', 0x00, 0x00, 0x00]).expect("write main");
         fs::write(&sub, [0x00, 0x00]).expect("write sub");
 
-        let inputs = vec![main.to_string_lossy().to_string()];
-        let (_, _, names) = load_objects_with_requests(&inputs, false).expect("load");
+        let inputs = vec![main.clone()];
+        let (_, _, names) = load_objects_with_requests_paths(&inputs, false).expect("load");
         assert_eq!(names.len(), 2);
         assert!(names.iter().any(|v| v.ends_with("sub.o")));
 
@@ -1111,8 +1099,8 @@ mod tests {
         let ar = make_simple_ar(&[("foo.o", &obj_with_def("foo"))]);
         fs::write(&lib, ar).expect("write lib");
 
-        let inputs = vec![main.to_string_lossy().to_string()];
-        let (_, sums, names) = load_objects_with_requests(&inputs, false).expect("load");
+        let inputs = vec![main.clone()];
+        let (_, sums, names) = load_objects_with_requests_paths(&inputs, false).expect("load");
         validate_unresolved_symbols(&sums, &names).expect("resolved");
         assert!(names.iter().any(|v| v.ends_with("libx.a(foo.o)")));
 
@@ -1186,8 +1174,8 @@ mod tests {
 
         let prev = std::env::current_dir().expect("cwd");
         std::env::set_current_dir(&dir_cwd).expect("chdir");
-        let inputs = vec![main.to_string_lossy().to_string()];
-        let (_, _, names) = load_objects_with_requests(&inputs, false).expect("load");
+        let inputs = vec![main.clone()];
+        let (_, _, names) = load_objects_with_requests_paths(&inputs, false).expect("load");
         std::env::set_current_dir(prev).expect("restore cwd");
 
         assert_eq!(names.len(), 2);
@@ -1216,8 +1204,8 @@ mod tests {
         let ar = make_simple_ar(&[("foo.o", &obj_with_def("foo")), ("bar.o", &obj_with_def("bar"))]);
         fs::write(&lib, ar).expect("write lib");
 
-        let inputs = vec![main.to_string_lossy().to_string()];
-        let (_, _, names) = load_objects_with_requests(&inputs, false).expect("must load");
+        let inputs = vec![main.clone()];
+        let (_, _, names) = load_objects_with_requests_paths(&inputs, false).expect("must load");
         assert_eq!(names.len(), 2);
         assert!(names.iter().any(|v| v.ends_with("libx.a(foo.o)")));
         assert!(!names.iter().any(|v| v.ends_with("libx.a(bar.o)")));
@@ -1380,11 +1368,11 @@ mod tests {
         fs::write(&main, obj_with_xref("foo")).expect("write main");
 
         let inputs = vec![
-            lib.to_string_lossy().to_string(),
-            main.to_string_lossy().to_string(),
-            lib.to_string_lossy().to_string(),
+            lib.clone(),
+            main.clone(),
+            lib.clone(),
         ];
-        let (_, sums, names) = load_objects_with_requests(&inputs, false).expect("load");
+        let (_, sums, names) = load_objects_with_requests_paths(&inputs, false).expect("load");
         validate_unresolved_symbols(&sums, &names).expect("resolved");
         assert!(names.iter().any(|v| v.ends_with("libx.a(foo.o)")));
 
@@ -1411,10 +1399,10 @@ mod tests {
         fs::write(&main2, obj_with_xref_and_request("foo", "libx.a")).expect("write main2");
 
         let inputs = vec![
-            main1.to_string_lossy().to_string(),
-            main2.to_string_lossy().to_string(),
+            main1.clone(),
+            main2.clone(),
         ];
-        let (_, sums, names) = load_objects_with_requests(&inputs, false).expect("load");
+        let (_, sums, names) = load_objects_with_requests_paths(&inputs, false).expect("load");
         // dummy stays unresolved (expected), but foo should be resolved by second archive visit.
         let err = validate_unresolved_symbols(&sums, &names).expect_err("must have unresolved");
         assert!(!err.to_string().contains("未定義シンボル: foo"));

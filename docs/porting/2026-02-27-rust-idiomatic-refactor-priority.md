@@ -218,6 +218,7 @@
   - 互換性都合で `-p/--map` の「引数省略許容」は維持し、`map` のみ `Option<String>` のまま運用。
 - P1-1: 着手（第一段）
   - archive member 選択結果の適用を `HashSet<usize>` から `Vec<bool>` マスクへ変更し、中間集合構築と `contains` 探索コストを削減。
+  - `linker` テスト経路の入力ロードも `PathBuf` ベース (`load_objects_with_requests_paths`) に統一し、`String -> PathBuf` 再変換を削減。
 
 検証:
 - `cargo test -q --manifest-path Rhlk/Cargo.toml`: pass
