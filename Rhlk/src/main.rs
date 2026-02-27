@@ -32,7 +32,7 @@ fn main() {
         }
         argv.push(arg);
     }
-    let mut args = rhlk::cli::Args::parse_from(argv.clone());
+    let mut args = rhlk::cli::Args::parse_from(argv.iter().cloned());
     if args.g2lk_off && args.g2lk_on {
         eprintln!("--g2lk-off and --g2lk-on are mutually exclusive");
         std::process::exit(2);

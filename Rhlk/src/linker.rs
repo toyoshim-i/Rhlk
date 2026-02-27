@@ -589,8 +589,11 @@ fn load_objects_with_requests(
                     parsed_members.push((member_name, object, summary));
                 }
                 let select_indices = select_archive_members(&summaries, &parsed_members);
-                for idx in select_indices {
-                    let (member_name, object, summary) = &parsed_members[idx];
+                let selected = select_indices.into_iter().collect::<HashSet<_>>();
+                for (idx, (member_name, object, summary)) in parsed_members.into_iter().enumerate() {
+                    if !selected.contains(&idx) {
+                        continue;
+                    }
                     if verbose {
                         println!(
                             "parsed {}({}): {} commands",
@@ -604,8 +607,8 @@ fn load_objects_with_requests(
                         base_dir,
                         &summary.requests,
                     )?;
-                    objects.push(object.clone());
-                    summaries.push(summary.clone());
+                    objects.push(object);
+                    summaries.push(summary);
                     input_names.push(format!("{}({})", path.to_string_lossy(), member_name));
                 }
             }
@@ -747,7 +750,20 @@ fn select_archive_members(
 ) -> Vec<usize> {
     let mut selected = Vec::<usize>::new();
     let mut selected_set = HashSet::<usize>::new();
-    let mut unresolved = unresolved_symbols(loaded_summaries);
+    let mut defs = HashSet::<Vec<u8>>::new();
+    let mut unresolved = HashSet::<Vec<u8>>::new();
+    for sum in loaded_summaries {
+        for sym in &sum.symbols {
+            defs.insert(sym.name.clone());
+        }
+    }
+    for sum in loaded_summaries {
+        for xr in &sum.xrefs {
+            if !defs.contains(&xr.name) {
+                unresolved.insert(xr.name.clone());
+            }
+        }
+    }
     if unresolved.is_empty() {
         return selected;
     }
@@ -765,31 +781,21 @@ fn select_archive_members(
             selected.push(idx);
             selected_set.insert(idx);
             changed = true;
-
-            let mut all = loaded_summaries.to_vec();
-            all.extend(selected.iter().map(|i| members[*i].2.clone()));
-            unresolved = unresolved_symbols(&all);
+            for sym in &sum.symbols {
+                defs.insert(sym.name.clone());
+            }
+            for xr in &sum.xrefs {
+                if !defs.contains(&xr.name) {
+                    unresolved.insert(xr.name.clone());
+                }
+            }
+            unresolved.retain(|name| !defs.contains(name));
         }
         if !changed {
             break;
         }
     }
     selected
-}
-
-fn unresolved_symbols(summaries: &[ObjectSummary]) -> HashSet<Vec<u8>> {
-    let mut defs = HashSet::<Vec<u8>>::new();
-    let mut xrefs = HashSet::<Vec<u8>>::new();
-    for s in summaries {
-        for sym in &s.symbols {
-            defs.insert(sym.name.clone());
-        }
-        for xr in &s.xrefs {
-            xrefs.insert(xr.name.clone());
-        }
-    }
-    xrefs.retain(|n| !defs.contains(n));
-    xrefs
 }
 
 fn trim_member_name(name: &str) -> String {
