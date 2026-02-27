@@ -72,8 +72,12 @@ fn prepare_objects(
     runtime: RuntimeConfig,
     expanded_inputs: Vec<String>,
 ) -> anyhow::Result<PreparedLink> {
+    let expanded_paths = expanded_inputs
+        .iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
     let (objects, summaries, input_names) =
-        load_objects_with_requests(&expanded_inputs, runtime.verbose)?;
+        load_objects_with_requests_paths(&expanded_paths, runtime.verbose)?;
     let mut objects = objects;
     let mut summaries = summaries;
     let mut input_names = input_names;
@@ -521,8 +525,20 @@ fn validate_unresolved_symbols(summaries: &[ObjectSummary], input_names: &[Strin
     anyhow::bail!("{}", messages.join("\n"));
 }
 
+#[cfg(test)]
 fn load_objects_with_requests(
     initial_inputs: &[String],
+    verbose: bool,
+) -> anyhow::Result<(Vec<crate::format::obj::ObjectFile>, Vec<ObjectSummary>, Vec<String>)> {
+    let input_paths = initial_inputs
+        .iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    load_objects_with_requests_paths(&input_paths, verbose)
+}
+
+fn load_objects_with_requests_paths(
+    initial_inputs: &[PathBuf],
     verbose: bool,
 ) -> anyhow::Result<(Vec<crate::format::obj::ObjectFile>, Vec<ObjectSummary>, Vec<String>)> {
     const MAX_ARCHIVE_VISITS: usize = 64;
@@ -534,7 +550,7 @@ fn load_objects_with_requests(
     let mut archive_visits = HashMap::<PathBuf, usize>::new();
 
     for input in initial_inputs {
-        pending.push_back(PathBuf::from(input));
+        pending.push_back(input.clone());
     }
 
     while let Some(path) = pending.pop_front() {
