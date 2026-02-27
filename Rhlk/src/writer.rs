@@ -116,12 +116,13 @@ fn build_map_text(
         .ok()
         .flatten()
         .unwrap_or(0);
-    let mut rows = Vec::<(u32, String, String)>::new();
+    let mut rows = Vec::<(u32, SectionKind, String)>::new();
     for (name_bytes, sym) in addrs {
         let name = String::from_utf8_lossy(&name_bytes).to_string();
-        rows.push((sym.addr, section_tag(sym.section).to_string(), name));
+        rows.push((sym.addr, sym.section, name));
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
+    let xrefs = collect_xrefs(summaries);
     let mut out = String::new();
     out.push_str("==========================================================\n");
     out.push_str("rhlk map\n");
@@ -159,10 +160,57 @@ fn build_map_text(
         rcur = rcur.saturating_add(sz);
     }
 
-    out.push_str("-------------------------- xdef --------------------------\n");
-    for (addr, sect, name) in rows {
-        out.push_str(&format!("{addr:08X} {sect:<7} {name}\n"));
+    out.push_str("-------------------------- xref --------------------------\n");
+    for xr in xrefs {
+        out.push_str(&format!("{xr}\n"));
     }
+
+    out.push_str("-------------------------- xdef --------------------------\n");
+    for (addr, sect, name) in &rows {
+        if matches!(sect, SectionKind::Common | SectionKind::RCommon | SectionKind::RLCommon) {
+            continue;
+        }
+        out.push_str(&format!("{addr:08X} {:<7} {name}\n", section_tag(*sect)));
+    }
+
+    out.push_str("-------------------------- comm --------------------------\n");
+    for (addr, sect, name) in &rows {
+        if *sect != SectionKind::Common {
+            continue;
+        }
+        out.push_str(&format!("{addr:08X} {:<7} {name}\n", section_tag(*sect)));
+    }
+
+    out.push_str("-------------------------- rcomm -------------------------\n");
+    for (addr, sect, name) in &rows {
+        if *sect != SectionKind::RCommon {
+            continue;
+        }
+        out.push_str(&format!("{addr:08X} {:<7} {name}\n", section_tag(*sect)));
+    }
+
+    out.push_str("-------------------------- rlcomm ------------------------\n");
+    for (addr, sect, name) in &rows {
+        if *sect != SectionKind::RLCommon {
+            continue;
+        }
+        out.push_str(&format!("{addr:08X} {:<7} {name}\n", section_tag(*sect)));
+    }
+    out
+}
+
+fn collect_xrefs(summaries: &[ObjectSummary]) -> Vec<String> {
+    let mut set = HashSet::<Vec<u8>>::new();
+    for s in summaries {
+        for xr in &s.xrefs {
+            set.insert(xr.name.clone());
+        }
+    }
+    let mut out: Vec<String> = set
+        .into_iter()
+        .map(|v| String::from_utf8_lossy(&v).to_string())
+        .collect();
+    out.sort();
     out
 }
 
@@ -2323,7 +2371,11 @@ mod tests {
         assert!(text.contains("exec                     : 00000000 - 00000000 (00000001)"));
         assert!(text.contains("text                     : 00000000 - 00000003 (00000004)"));
         assert!(text.contains("data                     : 00000004 - 00000005 (00000002)"));
+        assert!(text.contains("-------------------------- xref --------------------------"));
         assert!(text.contains("-------------------------- xdef --------------------------"));
+        assert!(text.contains("-------------------------- comm --------------------------"));
+        assert!(text.contains("-------------------------- rcomm -------------------------"));
+        assert!(text.contains("-------------------------- rlcomm ------------------------"));
         assert!(text.contains("00000000 TEXT    _text0"));
         assert!(text.contains("00000005 DATA    _data0"));
     }
