@@ -74,7 +74,12 @@ pub fn write_output(
     Ok(())
 }
 
-pub fn write_map(output_path: &str, summaries: &[ObjectSummary], layout: &LayoutPlan) -> Result<()> {
+pub fn write_map(
+    output_path: &str,
+    summaries: &[ObjectSummary],
+    layout: &LayoutPlan,
+    input_paths: &[String],
+) -> Result<()> {
     let text_size = layout
         .total_size_by_section
         .get(&SectionKind::Text)
@@ -95,7 +100,15 @@ pub fn write_map(output_path: &str, summaries: &[ObjectSummary], layout: &Layout
         .get(&SectionKind::Common)
         .copied()
         .unwrap_or(0);
-    let text = build_map_text(summaries, layout, text_size, data_size, bss_only, common_only);
+    let text = build_map_text(
+        summaries,
+        layout,
+        text_size,
+        data_size,
+        bss_only,
+        common_only,
+        input_paths,
+    );
     std::fs::write(output_path, text).with_context(|| format!("failed to write {output_path}"))?;
     Ok(())
 }
@@ -107,6 +120,7 @@ fn build_map_text(
     data_size: u32,
     bss_only: u32,
     common_only: u32,
+    input_paths: &[String],
 ) -> String {
     let addrs = build_global_symbol_addrs(summaries, layout, text_size, data_size, bss_only, common_only);
     let bss_size = bss_only
@@ -122,7 +136,7 @@ fn build_map_text(
         rows.push((sym.addr, sym.section, name));
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
-    let xrefs = collect_xrefs(summaries);
+    let xrefs = collect_xrefs_with_owner(summaries, input_paths);
     let mut out = String::new();
     out.push_str("==========================================================\n");
     out.push_str("rhlk map\n");
@@ -161,8 +175,8 @@ fn build_map_text(
     }
 
     out.push_str("-------------------------- xref --------------------------\n");
-    for xr in xrefs {
-        out.push_str(&format!("{xr}\n"));
+    for (name, owner) in xrefs {
+        out.push_str(&format!("{name:<24} : in {owner}\n"));
     }
 
     out.push_str("-------------------------- xdef --------------------------\n");
@@ -170,7 +184,7 @@ fn build_map_text(
         if matches!(sect, SectionKind::Common | SectionKind::RCommon | SectionKind::RLCommon) {
             continue;
         }
-        out.push_str(&format!("{addr:08X} {:<7} {name}\n", section_tag(*sect)));
+        out.push_str(&format_symbol_line(name, *addr, section_tag(*sect)));
     }
 
     out.push_str("-------------------------- comm --------------------------\n");
@@ -178,7 +192,7 @@ fn build_map_text(
         if *sect != SectionKind::Common {
             continue;
         }
-        out.push_str(&format!("{addr:08X} {:<7} {name}\n", section_tag(*sect)));
+        out.push_str(&format_symbol_line(name, *addr, section_tag(*sect)));
     }
 
     out.push_str("-------------------------- rcomm -------------------------\n");
@@ -186,7 +200,7 @@ fn build_map_text(
         if *sect != SectionKind::RCommon {
             continue;
         }
-        out.push_str(&format!("{addr:08X} {:<7} {name}\n", section_tag(*sect)));
+        out.push_str(&format_symbol_line(name, *addr, section_tag(*sect)));
     }
 
     out.push_str("-------------------------- rlcomm ------------------------\n");
@@ -194,24 +208,37 @@ fn build_map_text(
         if *sect != SectionKind::RLCommon {
             continue;
         }
-        out.push_str(&format!("{addr:08X} {:<7} {name}\n", section_tag(*sect)));
+        out.push_str(&format_symbol_line(name, *addr, section_tag(*sect)));
     }
     out
 }
 
-fn collect_xrefs(summaries: &[ObjectSummary]) -> Vec<String> {
+fn collect_xrefs_with_owner(summaries: &[ObjectSummary], input_paths: &[String]) -> Vec<(String, String)> {
     let mut set = HashSet::<Vec<u8>>::new();
     for s in summaries {
         for xr in &s.xrefs {
             set.insert(xr.name.clone());
         }
     }
-    let mut out: Vec<String> = set
+    let mut out: Vec<(String, String)> = set
         .into_iter()
-        .map(|v| String::from_utf8_lossy(&v).to_string())
+        .map(|v| {
+            let name = String::from_utf8_lossy(&v).to_string();
+            let owner = summaries
+                .iter()
+                .enumerate()
+                .find(|(_, s)| s.symbols.iter().any(|sym| sym.name == v))
+                .and_then(|(idx, _)| input_paths.get(idx).cloned())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            (name, owner)
+        })
         .collect();
-    out.sort();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
     out
+}
+
+fn format_symbol_line(name: &str, addr: u32, sect: &str) -> String {
+    format!("{name:<24} : {addr:08X} ({sect:<7})\n")
 }
 
 fn format_section_line(name: &str, pos: u32, size: u32) -> String {
@@ -2366,7 +2393,7 @@ mod tests {
             value: 1,
         });
         let layout = plan_layout(&[s0.clone(), s1.clone()]);
-        let text = build_map_text(&[s0, s1], &layout, 4, 2, 0, 0);
+        let text = build_map_text(&[s0, s1], &layout, 4, 2, 0, 0, &[]);
         assert!(text.contains("=========================================================="));
         assert!(text.contains("exec                     : 00000000 - 00000000 (00000001)"));
         assert!(text.contains("text                     : 00000000 - 00000003 (00000004)"));
@@ -2376,8 +2403,8 @@ mod tests {
         assert!(text.contains("-------------------------- comm --------------------------"));
         assert!(text.contains("-------------------------- rcomm -------------------------"));
         assert!(text.contains("-------------------------- rlcomm ------------------------"));
-        assert!(text.contains("00000000 TEXT    _text0"));
-        assert!(text.contains("00000005 DATA    _data0"));
+        assert!(text.contains("_text0                   : 00000000 (TEXT   )"));
+        assert!(text.contains("_data0                   : 00000005 (DATA   )"));
     }
 
     #[test]
