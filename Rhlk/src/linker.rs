@@ -4,7 +4,7 @@ use crate::format::obj::parse_object;
 use crate::layout::plan_layout;
 use crate::resolver::resolve_object;
 use crate::resolver::ObjectSummary;
-use crate::writer::write_output;
+use crate::writer::{write_map, write_output};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
@@ -60,11 +60,49 @@ pub fn run(args: Args) -> anyhow::Result<()> {
             println!("wrote output: {output}");
         }
     }
+    if let Some(map_output) = resolve_map_output(&args.map, &args.output, &args.inputs) {
+        write_map(&map_output, &summaries, &layout)?;
+        if args.verbose {
+            println!("wrote map: {map_output}");
+        }
+    }
 
     if args.verbose {
         println!("rhlk: parsed {} input file(s)", input_names.len());
     }
     Ok(())
+}
+
+fn resolve_map_output(
+    map_opt: &Option<String>,
+    output_opt: &Option<String>,
+    inputs: &[String],
+) -> Option<String> {
+    let raw = map_opt.as_ref()?;
+    if !raw.is_empty() {
+        let p = PathBuf::from(raw);
+        if p.extension().is_some() {
+            return Some(raw.clone());
+        }
+        let mut with = raw.clone();
+        with.push_str(".map");
+        return Some(with);
+    }
+    let base = output_opt
+        .as_ref()
+        .cloned()
+        .or_else(|| inputs.first().cloned())?;
+    let p = PathBuf::from(base);
+    let stem = p.file_stem()?.to_string_lossy();
+    let mut out = if let Some(parent) = p.parent() {
+        parent.join(format!("{stem}.map"))
+    } else {
+        PathBuf::from(format!("{stem}.map"))
+    };
+    if out.as_os_str().is_empty() {
+        out = PathBuf::from("a.map");
+    }
+    Some(out.to_string_lossy().to_string())
 }
 
 fn validate_unresolved_symbols(summaries: &[ObjectSummary], input_names: &[String]) -> anyhow::Result<()> {
@@ -424,7 +462,7 @@ fn resolve_gnu_long_name(table: Option<&[u8]>, offset: usize) -> Option<String> 
 mod tests {
     use super::{
         is_ar_archive, load_objects_with_requests, parse_ar_members, select_archive_members,
-        validate_unresolved_symbols,
+        resolve_map_output, validate_unresolved_symbols,
     };
     use crate::format::obj::parse_object;
     use crate::resolver::resolve_object;
@@ -868,5 +906,17 @@ mod tests {
         let _ = fs::remove_file(main2);
         let _ = fs::remove_file(lib);
         let _ = fs::remove_dir(dir);
+    }
+
+    #[test]
+    fn resolves_map_output_name() {
+        let o = resolve_map_output(&Some(String::new()), &Some("out.x".to_string()), &["in.o".to_string()]);
+        assert_eq!(o.as_deref(), Some("out.map"));
+        let i = resolve_map_output(&Some(String::new()), &None, &["src/main.o".to_string()]);
+        assert_eq!(i.as_deref(), Some("src/main.map"));
+        let n = resolve_map_output(&Some("foo".to_string()), &None, &[]);
+        assert_eq!(n.as_deref(), Some("foo.map"));
+        let e = resolve_map_output(&Some("foo.txt".to_string()), &None, &[]);
+        assert_eq!(e.as_deref(), Some("foo.txt"));
     }
 }

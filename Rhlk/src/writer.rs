@@ -74,6 +74,77 @@ pub fn write_output(
     Ok(())
 }
 
+pub fn write_map(output_path: &str, summaries: &[ObjectSummary], layout: &LayoutPlan) -> Result<()> {
+    let text_size = layout
+        .total_size_by_section
+        .get(&SectionKind::Text)
+        .copied()
+        .unwrap_or(0);
+    let data_size = layout
+        .total_size_by_section
+        .get(&SectionKind::Data)
+        .copied()
+        .unwrap_or(0);
+    let bss_only = layout
+        .total_size_by_section
+        .get(&SectionKind::Bss)
+        .copied()
+        .unwrap_or(0);
+    let common_only = layout
+        .total_size_by_section
+        .get(&SectionKind::Common)
+        .copied()
+        .unwrap_or(0);
+    let text = build_map_text(summaries, layout, text_size, data_size, bss_only, common_only);
+    std::fs::write(output_path, text).with_context(|| format!("failed to write {output_path}"))?;
+    Ok(())
+}
+
+fn build_map_text(
+    summaries: &[ObjectSummary],
+    layout: &LayoutPlan,
+    text_size: u32,
+    data_size: u32,
+    bss_only: u32,
+    common_only: u32,
+) -> String {
+    let addrs = build_global_symbol_addrs(summaries, layout, text_size, data_size, bss_only, common_only);
+    let mut rows = Vec::<(u32, String, String)>::new();
+    for (name_bytes, sym) in addrs {
+        let name = String::from_utf8_lossy(&name_bytes).to_string();
+        rows.push((sym.addr, section_tag(sym.section).to_string(), name));
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
+    let mut out = String::new();
+    out.push_str("# rhlk map\n");
+    out.push_str("# address  section  symbol\n");
+    for (addr, sect, name) in rows {
+        out.push_str(&format!("{addr:08X} {sect:<7} {name}\n"));
+    }
+    out
+}
+
+fn section_tag(section: SectionKind) -> &'static str {
+    match section {
+        SectionKind::Abs => "ABS",
+        SectionKind::Text => "TEXT",
+        SectionKind::Data => "DATA",
+        SectionKind::Bss => "BSS",
+        SectionKind::Stack => "STACK",
+        SectionKind::RData => "RDATA",
+        SectionKind::RBss => "RBSS",
+        SectionKind::RStack => "RSTACK",
+        SectionKind::RLData => "RLDATA",
+        SectionKind::RLBss => "RLBSS",
+        SectionKind::RLStack => "RLSTACK",
+        SectionKind::Common => "COMMON",
+        SectionKind::RCommon => "RCOMMON",
+        SectionKind::RLCommon => "RLCOMMON",
+        SectionKind::Xref => "XREF",
+        SectionKind::Unknown(_) => "UNKNOWN",
+    }
+}
+
 fn build_x_image(
     objects: &[ObjectFile],
     summaries: &[ObjectSummary],
@@ -2025,7 +2096,8 @@ mod tests {
     use crate::layout::plan_layout;
     use crate::resolver::{ObjectSummary, SectionKind, Symbol};
     use crate::writer::{
-        build_r_payload, build_x_image, validate_link_inputs, validate_r_convertibility,
+        build_map_text, build_r_payload, build_x_image, validate_link_inputs,
+        validate_r_convertibility,
     };
 
     #[test]
@@ -2168,6 +2240,27 @@ mod tests {
         assert_eq!(&image[36..40], &(4u32.to_be_bytes()));
         assert_eq!(&image[40..44], &(2u32.to_be_bytes()));
         assert_eq!(&image[64..68], &[0x01, 0x02, 0x11, 0x22]);
+    }
+
+    #[test]
+    fn builds_map_text_with_symbol_addresses() {
+        let mut s0 = mk_summary(2, 2, 0);
+        s0.symbols.push(Symbol {
+            name: b"_text0".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let mut s1 = mk_summary(2, 2, 2);
+        s1.symbols.push(Symbol {
+            name: b"_data0".to_vec(),
+            section: SectionKind::Data,
+            value: 1,
+        });
+        let layout = plan_layout(&[s0.clone(), s1.clone()]);
+        let text = build_map_text(&[s0, s1], &layout, 4, 2, 0, 0);
+        assert!(text.contains("# rhlk map"));
+        assert!(text.contains("00000000 TEXT    _text0"));
+        assert!(text.contains("00000005 DATA    _data0"));
     }
 
     #[test]
