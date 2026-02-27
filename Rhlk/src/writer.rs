@@ -998,6 +998,7 @@ fn patch_opaque_commands(
     for (idx, (obj, summary)) in objects.iter().zip(summaries.iter()).enumerate() {
         let mut current = SectionKind::Text;
         let mut cursor_by_section = BTreeMap::<SectionKind, u32>::new();
+        let mut calc_stack = Vec::<ExprEntry>::new();
         for cmd in &obj.commands {
             match cmd {
                 Command::ChangeSection { section } => {
@@ -1010,9 +1011,26 @@ fn patch_opaque_commands(
                     bump_cursor(&mut cursor_by_section, current, *size);
                 }
                 Command::Opaque { code, payload } => {
+                    let hi = (*code >> 8) as u8;
+                    let lo = *code as u8;
+                    if hi == 0x80 {
+                        if let Some(entry) =
+                            evaluate_push_80_for_patch(lo, payload, summary, global_symbol_addrs)
+                        {
+                            calc_stack.push(entry);
+                        }
+                    }
                     let local = cursor_by_section.get(&current).copied().unwrap_or(0);
                     if let Some(bytes) =
-                        materialize_opaque(*code, payload, summary, global_symbol_addrs)
+                        materialize_stack_write_opaque(*code, &mut calc_stack).or_else(|| {
+                            materialize_opaque(
+                                *code,
+                                payload,
+                                summary,
+                                global_symbol_addrs,
+                                &layout.placements[idx].by_section,
+                            )
+                        })
                             .and_then(|v| if is_initialized_section(current) { Some(v) } else { None })
                     {
                         let Some(start) = layout.placements[idx].by_section.get(&current).copied() else {
@@ -1038,59 +1056,129 @@ fn patch_opaque_commands(
     Ok(())
 }
 
+fn materialize_stack_write_opaque(code: u16, calc_stack: &mut Vec<ExprEntry>) -> Option<Vec<u8>> {
+    let hi = (code >> 8) as u8;
+    let v = match hi {
+        0x90 | 0x91 | 0x92 | 0x93 | 0x96 | 0x99 | 0x9a => calc_stack.pop()?,
+        _ => return None,
+    };
+    let out = match hi {
+        0x90 => vec![0x00, v.value as u8],
+        0x93 => vec![v.value as u8],
+        0x91 | 0x99 => (v.value as u16).to_be_bytes().to_vec(),
+        0x92 | 0x96 | 0x9a => (v.value as u32).to_be_bytes().to_vec(),
+        _ => return None,
+    };
+    Some(out)
+}
+
+fn evaluate_push_80_for_patch(
+    lo: u8,
+    payload: &[u8],
+    summary: &ObjectSummary,
+    global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
+) -> Option<ExprEntry> {
+    if matches!(lo, 0xfc..=0xff) {
+        let label_no = read_u16_be(payload)?;
+        let xref = summary.xrefs.iter().find(|x| x.value == label_no as u32)?;
+        let sym = global_symbol_addrs.get(&xref.name)?;
+        let stat = match section_stat(sym.section) {
+            0 => 0,
+            1 => 1,
+            _ => 2,
+        };
+        return Some(ExprEntry {
+            stat,
+            value: sym.addr as i32,
+        });
+    }
+    if lo <= 0x0a {
+        let value = read_i32_be(payload)?;
+        let stat = match lo {
+            0x00 => 0,
+            0x01..=0x04 => 1,
+            _ => 2,
+        };
+        return Some(ExprEntry { stat, value });
+    }
+    None
+}
+
 fn materialize_opaque(
     code: u16,
     payload: &[u8],
     summary: &ObjectSummary,
     global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
+    placement: &BTreeMap<SectionKind, u32>,
 ) -> Option<Vec<u8>> {
     let hi = (code >> 8) as u8;
-    let lo = code as u8;
-    let base = resolve_opaque_base_value(lo, payload, summary, global_symbol_addrs)?;
+    let value = resolve_opaque_value(code, payload, summary, global_symbol_addrs, placement)?;
     match hi {
-        0x40 => Some(vec![0x00, base as u8]),
-        0x43 => Some(vec![base as u8]),
-        0x41 => Some((base as u16).to_be_bytes().to_vec()),
-        0x42 | 0x46 => Some((base as u32).to_be_bytes().to_vec()),
-        0x50 => {
-            let off = read_i32_be(payload.get(2..).unwrap_or(&[]))?;
-            let v = base.wrapping_add(off);
-            Some(vec![0x00, v as u8])
-        }
-        0x53 => {
-            let off = read_i32_be(payload.get(2..).unwrap_or(&[]))?;
-            let v = base.wrapping_add(off);
-            Some(vec![v as u8])
-        }
-        0x51 => {
-            let off = read_i32_be(payload.get(2..).unwrap_or(&[]))?;
-            let v = base.wrapping_add(off);
-            Some((v as u16).to_be_bytes().to_vec())
-        }
-        0x52 | 0x56 => {
-            let off = read_i32_be(payload.get(2..).unwrap_or(&[]))?;
-            let v = base.wrapping_add(off);
-            Some((v as u32).to_be_bytes().to_vec())
-        }
+        0x40 | 0x50 => Some(vec![0x00, value as u8]),
+        0x43 | 0x47 | 0x53 | 0x57 | 0x6b => Some(vec![value as u8]),
+        0x41 | 0x45 | 0x51 | 0x55 | 0x65 | 0x69 => Some((value as u16).to_be_bytes().to_vec()),
+        0x42 | 0x46 | 0x52 | 0x56 | 0x6a => Some((value as u32).to_be_bytes().to_vec()),
         _ => None,
     }
 }
 
-fn resolve_opaque_base_value(
-    lo: u8,
+fn resolve_opaque_value(
+    code: u16,
     payload: &[u8],
     summary: &ObjectSummary,
     global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
+    placement: &BTreeMap<SectionKind, u32>,
 ) -> Option<i32> {
-    if lo == 0xff {
+    let hi = (code >> 8) as u8;
+    let lo = code as u8;
+
+    if matches!(hi, 0x65 | 0x69 | 0x6a | 0x6b) {
+        let adr = read_i32_be(payload)?;
+        let label_no = read_u16_be(payload.get(4..)?)?;
+        let xref = summary.xrefs.iter().find(|x| x.value == label_no as u32)?;
+        let sym = global_symbol_addrs.get(&xref.name)?;
+        let base = section_value_with_placement(lo, adr, placement)?;
+        return Some((sym.addr as i32).wrapping_sub(base));
+    }
+
+    let mut base = if matches!(lo, 0xfc..=0xff) {
         let label_no = read_u16_be(payload)?;
         let xref = summary.xrefs.iter().find(|x| x.value == label_no as u32)?;
-        return global_symbol_addrs.get(&xref.name).map(|v| v.addr as i32);
+        global_symbol_addrs.get(&xref.name).map(|v| v.addr as i32)?
+    } else if (0x01..=0x0a).contains(&lo) {
+        let v = read_i32_be(payload)?;
+        section_value_with_placement(lo, v, placement)?
+    } else if lo == 0x00 {
+        read_i32_be(payload)?
+    } else {
+        return None;
+    };
+
+    if matches!(hi, 0x50 | 0x51 | 0x52 | 0x53 | 0x55 | 0x56 | 0x57) {
+        let off_pos = if matches!(lo, 0xfc..=0xff) { 2 } else { 4 };
+        let off = read_i32_be(payload.get(off_pos..)?)?;
+        base = base.wrapping_add(off);
     }
-    if lo <= 0x0a {
-        return read_i32_be(payload);
-    }
-    None
+
+    Some(base)
+}
+
+fn section_value_with_placement(lo: u8, value: i32, placement: &BTreeMap<SectionKind, u32>) -> Option<i32> {
+    let sect = match lo {
+        0x01 => SectionKind::Text,
+        0x02 => SectionKind::Data,
+        0x03 => SectionKind::Bss,
+        0x04 => SectionKind::Stack,
+        0x05 => SectionKind::RData,
+        0x06 => SectionKind::RBss,
+        0x07 => SectionKind::RStack,
+        0x08 => SectionKind::RLData,
+        0x09 => SectionKind::RLBss,
+        0x0a => SectionKind::RLStack,
+        _ => return None,
+    };
+    let base = placement.get(&sect).copied().unwrap_or(0) as i32;
+    Some(base.wrapping_add(value))
 }
 
 fn should_relocate(
@@ -1318,8 +1406,11 @@ fn classify_expression_errors(
         0xa0 => evaluate_a0(lo, calc_stack),
         0x90 => evaluate_wrt_stk_9000(calc_stack),
         0x91 => evaluate_wrt_stk_9100(calc_stack, current),
+        0x92 => evaluate_wrt_stk_long(calc_stack),
         0x93 => evaluate_wrt_stk_9300(calc_stack),
+        0x96 => evaluate_wrt_stk_long(calc_stack),
         0x99 => evaluate_wrt_stk_9900(calc_stack, current),
+        0x9a => evaluate_wrt_stk_long(calc_stack),
         0x40 | 0x43 => evaluate_direct_byte(hi, lo, payload, summary, global_symbols),
         0x50 | 0x53 => evaluate_direct_byte_with_offset(hi, lo, payload, summary, global_symbols),
         0x41 => evaluate_direct_word(lo, payload, summary, global_symbols, current),
@@ -1361,6 +1452,13 @@ fn evaluate_push_80(
 
 fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
     match lo {
+        0x02 => {
+            let Some(a) = calc_stack.pop() else {
+                return vec!["計算用スタックに値がありません"];
+            };
+            calc_stack.push(a);
+            Vec::new()
+        }
         0x01 | 0x03 | 0x04 | 0x05 | 0x06 | 0x07 => {
             let Some(mut a) = calc_stack.pop() else {
                 return vec!["計算用スタックに値がありません"];
@@ -1494,6 +1592,13 @@ fn evaluate_wrt_stk_9000(calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
 
 fn evaluate_wrt_stk_9300(calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
     evaluate_wrt_stk_byte(calc_stack)
+}
+
+fn evaluate_wrt_stk_long(calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
+    let Some(_v) = calc_stack.pop() else {
+        return vec!["計算用スタックに値がありません"];
+    };
+    Vec::new()
 }
 
 fn evaluate_wrt_stk_byte(calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
@@ -1863,7 +1968,9 @@ fn put_u32_be(buf: &mut [u8], at: usize, v: u32) {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
+
+    use super::{classify_expression_errors, evaluate_a0, ExprEntry};
 
     use crate::format::obj::{Command, ObjectFile};
     use crate::layout::plan_layout;
@@ -2876,6 +2983,512 @@ mod tests {
         // Common symbol first allocation offset is 0.
         assert_eq!(&image[off_pos..off_pos + 4], &[0, 0, 0, 0]);
         assert_eq!(&image[sect_pos..sect_pos + 2], &[0, 3]);
+    }
+
+    #[test]
+    fn a002_only_requires_stack_value() {
+        let mut st = vec![ExprEntry { stat: 2, value: 123 }];
+        let msgs = evaluate_a0(0x02, &mut st);
+        assert!(msgs.is_empty());
+        assert_eq!(st.len(), 1);
+        assert_eq!(st[0].stat, 2);
+        assert_eq!(st[0].value, 123);
+    }
+
+    #[test]
+    fn wrt_stk_9200_reports_underflow() {
+        let mut st = Vec::<ExprEntry>::new();
+        let msgs = classify_expression_errors(
+            0x9200,
+            &Command::Opaque {
+                code: 0x9200,
+                payload: Vec::new(),
+            },
+            &mk_summary(2, 0, 0),
+            &HashMap::new(),
+            SectionKind::Text,
+            &mut st,
+        );
+        assert_eq!(msgs, vec!["計算用スタックに値がありません"]);
+    }
+
+    #[test]
+    fn wrt_stk_9600_reports_underflow() {
+        let mut st = Vec::<ExprEntry>::new();
+        let msgs = classify_expression_errors(
+            0x9600,
+            &Command::Opaque {
+                code: 0x9600,
+                payload: Vec::new(),
+            },
+            &mk_summary(2, 0, 0),
+            &HashMap::new(),
+            SectionKind::Text,
+            &mut st,
+        );
+        assert_eq!(msgs, vec!["計算用スタックに値がありません"]);
+    }
+
+    #[test]
+    fn wrt_stk_9a00_reports_underflow() {
+        let mut st = Vec::<ExprEntry>::new();
+        let msgs = classify_expression_errors(
+            0x9a00,
+            &Command::Opaque {
+                code: 0x9a00,
+                payload: Vec::new(),
+            },
+            &mk_summary(2, 0, 0),
+            &HashMap::new(),
+            SectionKind::Text,
+            &mut st,
+        );
+        assert_eq!(msgs, vec!["計算用スタックに値がありません"]);
+    }
+
+    #[test]
+    fn materializes_47ff_with_global_xref_value() {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x47ff,
+                    payload: vec![0x00, 0x01],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 1,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0xaa]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut s0 = mk_summary(2, 2, 0);
+        s0.xrefs.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        let mut s1 = mk_summary(2, 1, 0);
+        s1.symbols.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let layout = plan_layout(&[s0.clone(), s1.clone()]);
+        let image = build_x_image(&[obj0, obj1], &[s0, s1], &layout).expect("x image");
+        // text payload: obj0(2 bytes) + obj1(1 byte). obj0 second byte remains zero.
+        assert_eq!(&image[64..67], &[0x02, 0x00, 0xaa]);
+    }
+
+    #[test]
+    fn materializes_6501_word_displacement() {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x6501,
+                    payload: vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0x4e, 0x71]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut s0 = mk_summary(2, 2, 0);
+        s0.xrefs.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        let mut s1 = mk_summary(2, 2, 0);
+        s1.symbols.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let layout = plan_layout(&[s0.clone(), s1.clone()]);
+        let image = build_x_image(&[obj0, obj1], &[s0, s1], &layout).expect("x image");
+        // disp = sym(2) - (text base(0)+adr(0)) = 2
+        assert_eq!(&image[64..66], &[0x00, 0x02]);
+    }
+
+    #[test]
+    fn materializes_6b01_byte_displacement() {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 1,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x6b01,
+                    payload: vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 1,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0xbb]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut s0 = mk_summary(2, 1, 0);
+        s0.xrefs.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        let mut s1 = mk_summary(2, 1, 0);
+        s1.symbols.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let layout = plan_layout(&[s0.clone(), s1.clone()]);
+        let image = build_x_image(&[obj0, obj1], &[s0, s1], &layout).expect("x image");
+        assert_eq!(&image[64..65], &[0x02]); // disp = 2 (obj align=2)
+    }
+
+    #[test]
+    fn materializes_55ff_word_with_offset() {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x55ff,
+                    payload: vec![0x00, 0x01, 0xff, 0xff, 0xff, 0xff],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 1,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0xcc]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut s0 = mk_summary(2, 2, 0);
+        s0.xrefs.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        let mut s1 = mk_summary(2, 1, 0);
+        s1.symbols.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let layout = plan_layout(&[s0.clone(), s1.clone()]);
+        let image = build_x_image(&[obj0, obj1], &[s0, s1], &layout).expect("x image");
+        // sym addr 2 + (-1) => 1
+        assert_eq!(&image[64..66], &[0x00, 0x01]);
+    }
+
+    #[test]
+    fn materializes_6a01_long_displacement() {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x6a01,
+                    payload: vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0xde, 0xad]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut s0 = mk_summary(2, 4, 0);
+        s0.xrefs.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        let mut s1 = mk_summary(2, 2, 0);
+        s1.symbols.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let layout = plan_layout(&[s0.clone(), s1.clone()]);
+        let image = build_x_image(&[obj0, obj1], &[s0, s1], &layout).expect("x image");
+        // sym(4) - adr(0) => 4
+        assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x04]);
+    }
+
+    #[test]
+    fn materializes_45ff_word_from_xref() {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x45ff,
+                    payload: vec![0x00, 0x01],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0xfa, 0xce]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut s0 = mk_summary(2, 2, 0);
+        s0.xrefs.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        let mut s1 = mk_summary(2, 2, 0);
+        s1.symbols.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let layout = plan_layout(&[s0.clone(), s1.clone()]);
+        let image = build_x_image(&[obj0, obj1], &[s0, s1], &layout).expect("x image");
+        assert_eq!(&image[64..66], &[0x00, 0x02]);
+    }
+
+    #[test]
+    fn materializes_57ff_byte_with_offset() {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 1,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x57ff,
+                    payload: vec![0x00, 0x01, 0x00, 0x00, 0x00, 0x01],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 1,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0xab]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut s0 = mk_summary(2, 1, 0);
+        s0.xrefs.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        let mut s1 = mk_summary(2, 1, 0);
+        s1.symbols.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let layout = plan_layout(&[s0.clone(), s1.clone()]);
+        let image = build_x_image(&[obj0, obj1], &[s0, s1], &layout).expect("x image");
+        // sym=2, +1 => 3
+        assert_eq!(&image[64..65], &[0x03]);
+    }
+
+    #[test]
+    fn materializes_6901_word_displacement_alias() {
+        let obj0 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x6901,
+                    payload: vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let obj1 = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::RawData(vec![0x01, 0x02]),
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let mut s0 = mk_summary(2, 2, 0);
+        s0.xrefs.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Xref,
+            value: 1,
+        });
+        let mut s1 = mk_summary(2, 2, 0);
+        s1.symbols.push(Symbol {
+            name: b"_sym".to_vec(),
+            section: SectionKind::Text,
+            value: 0,
+        });
+        let layout = plan_layout(&[s0.clone(), s1.clone()]);
+        let image = build_x_image(&[obj0, obj1], &[s0, s1], &layout).expect("x image");
+        assert_eq!(&image[64..66], &[0x00, 0x02]);
+    }
+
+    #[test]
+    fn materializes_9200_from_calc_stack_value() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x8000,
+                    payload: vec![0x12, 0x34, 0x56, 0x78],
+                },
+                Command::Opaque {
+                    code: 0x9200,
+                    payload: Vec::new(),
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..68], &[0x12, 0x34, 0x56, 0x78]);
+    }
+
+    #[test]
+    fn materializes_9000_from_calc_stack_value() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 2,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x8000,
+                    payload: vec![0x00, 0x00, 0x00, 0x7f],
+                },
+                Command::Opaque {
+                    code: 0x9000,
+                    payload: Vec::new(),
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 2, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..66], &[0x00, 0x7f]);
     }
 
     fn mk_summary(align: u32, text: u32, data: u32) -> ObjectSummary {

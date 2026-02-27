@@ -10,4 +10,7 @@ r_reltbl	-r	r_reltbl.o	r
 makemcs_not_mcs	--makemcs	xdef.o	mcs
 d32_adrs	-	d32_adrs_main.o d32_adrs_abs.o	x
 stack_under	-	stack_under.o	x
+stack_under_9200	-	stack_under_9200.o	x
+stack_under_9600	-	stack_under_9600.o	x
+stack_under_9a00	-	stack_under_9a00.o	x
 stack_over	-	stack_over.o	x
