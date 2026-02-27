@@ -1488,6 +1488,14 @@ fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
                     out.push("ゼロ除算");
                     return out;
                 }
+                if r.stat == 0 {
+                    if lo == 0x0a {
+                        r.value = b.value.wrapping_div(a.value);
+                    } else {
+                        // HLK's divs_d0d1 leaves abs(remainder).
+                        r.value = b.value.wrapping_rem(a.value).abs();
+                    }
+                }
                 calc_stack.push(r);
             }
             errors
@@ -1554,12 +1562,38 @@ fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
                 return vec!["計算用スタックに値がありません"];
             };
             let (res, errors) = eval_chk_calcexp2(a, b);
-            if let Some(r) = res {
+            if let Some(mut r) = res {
+                if r.stat == 0 {
+                    r.value = eval_a0_const_binop(lo, b.value, a.value);
+                }
                 calc_stack.push(r);
             }
             errors
         }
         _ => Vec::new(),
+    }
+}
+
+fn eval_a0_const_binop(lo: u8, b: i32, a: i32) -> i32 {
+    match lo {
+        0x09 => b.wrapping_mul(a),
+        0x0c => ((b as u32) >> ((a as u32) & 63)) as i32,
+        0x0d => ((b as u32) << ((a as u32) & 63)) as i32,
+        0x0e => b.wrapping_shr((a as u32) & 63),
+        0x11 => if b == a { -1 } else { 0 },
+        0x12 => if b != a { -1 } else { 0 },
+        0x13 => if (b as u32) < (a as u32) { -1 } else { 0 },
+        0x14 => if (b as u32) <= (a as u32) { -1 } else { 0 },
+        0x15 => if (b as u32) > (a as u32) { -1 } else { 0 },
+        0x16 => if (b as u32) >= (a as u32) { -1 } else { 0 },
+        0x17 => if b < a { -1 } else { 0 },
+        0x18 => if b <= a { -1 } else { 0 },
+        0x19 => if b > a { -1 } else { 0 },
+        0x1a => if b >= a { -1 } else { 0 },
+        0x1b => b & a,
+        0x1c => b ^ a,
+        0x1d => b | a,
+        _ => b,
     }
 }
 
@@ -3497,6 +3531,267 @@ mod tests {
         let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
         // lo=08 => RLDATA placement(0) + adr(4) + off(2) = 6
         assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x06]);
+    }
+
+    #[test]
+    fn materializes_5605_with_rdata_section_base_and_offset() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x5605,
+                    payload: vec![0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x07]);
+    }
+
+    #[test]
+    fn materializes_5606_with_rbss_section_base_and_offset() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x5606,
+                    payload: vec![0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x05],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x08]);
+    }
+
+    #[test]
+    fn materializes_5607_with_rstack_section_base_and_offset() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x5607,
+                    payload: vec![0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x06],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x09]);
+    }
+
+    #[test]
+    fn materializes_5609_with_rlbss_section_base_and_offset() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x5609,
+                    payload: vec![0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x07],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x0a]);
+    }
+
+    #[test]
+    fn materializes_560a_with_rlstack_section_base_and_offset() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x560a,
+                    payload: vec![0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x08],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x0b]);
+    }
+
+    #[test]
+    fn a0_const_binary_ops_match_expected_values() {
+        let cases: &[(u8, i32, i32, i32)] = &[
+            (0x09, 6, 7, 42),
+            (0x0c, 16, 2, 4),
+            (0x0d, 3, 4, 48),
+            (0x0e, -8, 1, -4),
+            (0x11, 5, 5, -1),
+            (0x12, 5, 6, -1),
+            (0x13, -1, 1, 0),
+            (0x14, 1, 1, -1),
+            (0x15, 2, 1, -1),
+            (0x16, 2, 2, -1),
+            (0x17, -2, 1, -1),
+            (0x18, 1, 1, -1),
+            (0x19, 3, 2, -1),
+            (0x1a, 2, 2, -1),
+            (0x1b, 0b1100, 0b1010, 0b1000),
+            (0x1c, 0b1100, 0b1010, 0b0110),
+            (0x1d, 0b1100, 0b1010, 0b1110),
+        ];
+        for (op, b, a, want) in cases {
+            let mut st = vec![
+                ExprEntry { stat: 0, value: *b },
+                ExprEntry { stat: 0, value: *a },
+            ];
+            let msgs = evaluate_a0(*op, &mut st);
+            assert!(msgs.is_empty(), "op={op:02x}");
+            assert_eq!(st.len(), 1, "op={op:02x}");
+            assert_eq!(st[0].stat, 0, "op={op:02x}");
+            assert_eq!(st[0].value, *want, "op={op:02x}");
+        }
+    }
+
+    #[test]
+    fn a00a_and_a00b_division_semantics() {
+        let mut div_st = vec![ExprEntry { stat: 0, value: 7 }, ExprEntry { stat: 0, value: 3 }];
+        assert!(evaluate_a0(0x0a, &mut div_st).is_empty());
+        assert_eq!(div_st[0].value, 2);
+
+        let mut mod_st = vec![ExprEntry { stat: 0, value: -7 }, ExprEntry { stat: 0, value: 3 }];
+        assert!(evaluate_a0(0x0b, &mut mod_st).is_empty());
+        assert_eq!(mod_st[0].value, 1); // abs(remainder)
+    }
+
+    #[test]
+    fn materializes_4606_with_rbss_section_base() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x4606,
+                    payload: vec![0x00, 0x00, 0x00, 0x09],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x09]);
+    }
+
+    #[test]
+    fn materializes_4607_with_rstack_section_base() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x4607,
+                    payload: vec![0x00, 0x00, 0x00, 0x0a],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x0a]);
+    }
+
+    #[test]
+    fn materializes_4609_with_rlbss_section_base() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x4609,
+                    payload: vec![0x00, 0x00, 0x00, 0x0b],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x0b]);
+    }
+
+    #[test]
+    fn materializes_460a_with_rlstack_section_base() {
+        let obj = ObjectFile {
+            commands: vec![
+                Command::Header {
+                    section: 0x01,
+                    size: 4,
+                    name: b"text".to_vec(),
+                },
+                Command::ChangeSection { section: 0x01 },
+                Command::Opaque {
+                    code: 0x460a,
+                    payload: vec![0x00, 0x00, 0x00, 0x0c],
+                },
+                Command::End,
+            ],
+            scd_tail: Vec::new(),
+        };
+        let sum = mk_summary(2, 4, 0);
+        let layout = plan_layout(std::slice::from_ref(&sum));
+        let image = build_x_image(&[obj], &[sum], &layout).expect("x image");
+        assert_eq!(&image[64..68], &[0x00, 0x00, 0x00, 0x0c]);
     }
 
     #[test]
