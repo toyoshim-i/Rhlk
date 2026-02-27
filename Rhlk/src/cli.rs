@@ -229,10 +229,10 @@ pub struct Args {
 impl Args {
     #[must_use]
     pub fn g2lk_mode(&self) -> G2lkMode {
-        if self.g2lk_off {
-            G2lkMode::Off
-        } else {
+        if self.g2lk_on {
             G2lkMode::On
+        } else {
+            G2lkMode::Off
         }
     }
 

@@ -58,7 +58,7 @@
         let sum1 = mk_summary(4, 2, 2);
         let layout = plan_layout(&[sum0.clone(), sum1.clone()]);
 
-        let payload = build_r_payload(&[obj0, obj1], &[sum0, sum1], &layout, true).expect("payload");
+        let payload = build_r_payload(&[obj0, obj1], &[sum0, sum1], &layout, true, false).expect("payload");
         // text: [aa bb 00 00 cc dd], data: [11 22]
         assert_eq!(payload, vec![0xaa, 0xbb, 0x00, 0x00, 0xcc, 0xdd, 0x11, 0x22]);
     }
@@ -91,9 +91,10 @@
             std::slice::from_ref(&sum),
             &layout,
             false,
+            false,
         )
         .expect("r with bss");
-        let without_bss = build_r_payload(&[obj], &[sum], &layout, true).expect("r without bss");
+        let without_bss = build_r_payload(&[obj], &[sum], &layout, true, false).expect("r without bss");
         assert_eq!(with_bss.len(), without_bss.len() + 4);
         assert_eq!(&with_bss[0..2], &[0xde, 0xad]);
         assert_eq!(&with_bss[2..], &[0, 0, 0, 0]);
@@ -193,9 +194,10 @@
             std::slice::from_ref(&sum),
             &layout,
             true,
+            false,
         )
         .expect("x image");
-        let without_symbols = build_x_image_with_options(&[obj], &[sum], &layout, false).expect("x image");
+        let without_symbols = build_x_image_with_options(&[obj], &[sum], &layout, false, false).expect("x image");
 
         let with_sym_size =
             u32::from_be_bytes([with_symbols[28], with_symbols[29], with_symbols[30], with_symbols[31]]);
@@ -496,7 +498,7 @@
         };
         let sum = mk_summary(2, 4, 0);
         let layout = plan_layout(std::slice::from_ref(&sum));
-        let err = validate_r_convertibility(&[obj], &[sum], &layout, "out.r")
+        let err = validate_r_convertibility(&[obj], &[sum], &layout, "out.r", false)
             .expect_err("should reject conversion");
         assert!(err.to_string().contains("再配置テーブルが使われています"));
     }
@@ -521,7 +523,7 @@
         let mut sum = mk_summary(2, 2, 0);
         sum.start_address = Some((0x02, 1));
         let layout = plan_layout(std::slice::from_ref(&sum));
-        let err = validate_r_convertibility(&[obj], &[sum], &layout, "out.r")
+        let err = validate_r_convertibility(&[obj], &[sum], &layout, "out.r", false)
             .expect_err("should reject conversion");
         assert!(err.to_string().contains("実行開始アドレスがファイル先頭ではありません"));
     }
@@ -673,7 +675,7 @@
         });
         let sum1 = mk_summary(2, 6, 0);
         let layout = plan_layout(&[sum0.clone(), sum1.clone()]);
-        let image = build_x_image_with_options(&[sys.clone(), app], &[sum0, sum1], &layout, false)
+        let image = build_x_image_with_options(&[sys.clone(), app], &[sum0, sum1], &layout, false, false)
             .expect("x image");
         let data_pos = 64 + 8;
         // ctor table at data+4: -1, entry(text+2), 0
@@ -707,7 +709,7 @@
         };
         let sum = mk_summary(2, 4, 0);
         let layout = plan_layout(std::slice::from_ref(&sum));
-        let err = build_x_image_with_options(&[obj], &[sum], &layout, false).expect_err("must fail");
+        let err = build_x_image_with_options(&[obj], &[sum], &layout, false, false).expect_err("must fail");
         assert!(err.to_string().contains("ctor table symbol is missing"));
     }
 
@@ -862,7 +864,7 @@
         let sum1 = mk_summary(2, 2, 0);
         let layout = plan_layout(&[sum0.clone(), sum1.clone()]);
         let err =
-            build_x_image_with_options(&[obj0, obj1], &[sum0, sum1], &layout, false).expect_err("must fail");
+            build_x_image_with_options(&[obj0, obj1], &[sum0, sum1], &layout, false, false).expect_err("must fail");
         assert!(err.to_string().contains("ctor/dtor table overflows"));
     }
 
@@ -903,7 +905,7 @@
             value: 0,
         });
         let layout = plan_layout(std::slice::from_ref(&sum));
-        let err = build_x_image_with_options(&[obj], &[sum], &layout, false).expect_err("must fail");
+        let err = build_x_image_with_options(&[obj], &[sum], &layout, false, false).expect_err("must fail");
         assert!(err
             .to_string()
             .contains("ctor table symbol must be in text/data"));

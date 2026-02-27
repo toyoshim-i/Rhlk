@@ -7,6 +7,7 @@ overflow	-	overflow.o xdef.o	x
 reltbl_odd	-	reltbl_odd.o	x
 r_entry	-r	r_entry.o	r
 r_reltbl	-r	r_reltbl.o	r
+r_reltbl_rn	-r -rn	r_reltbl.o	r
 makemcs_not_mcs	--makemcs	xdef.o	mcs
 map_xdef	-p	xdef.o	x
 map_d32_adrs	-p	d32_adrs_main.o d32_adrs_abs.o	x
@@ -16,6 +17,7 @@ x_cut_symbols	-x	xdef.o	x
 x_base_address	-b4096	xdef.o	x
 x_load_mode1	-g1	xdef.o	x
 x_g2lk_off	-0	xdef.o	x
+x_g2lk_on	-1	xdef.o	x
 x_opt_an	-an	xdef.o	x
 x_warn_off	-w	xdef.o	x
 stack_under	-	stack_under.o	x
