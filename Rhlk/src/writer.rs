@@ -1716,6 +1716,7 @@ fn classify_expression_errors(
         0x65 => evaluate_rel_word(lo, payload, summary, global_symbols),
         0x6a => evaluate_d32_adrs(lo, payload, summary, global_symbols),
         0x6b => evaluate_rel_byte(lo, payload, summary, global_symbols),
+        0x4c | 0x4d => vec![".ctor/.dtor は未対応です"],
         _ => Vec::new(),
     }
 }
@@ -2821,10 +2822,9 @@ mod tests {
             ],
             scd_tail: Vec::new(),
         };
-        let sum = mk_summary(2, 0, 0);
-        let layout = plan_layout(std::slice::from_ref(&sum));
-        let err = build_x_image(&[obj], &[sum], &layout).expect_err("must reject ctor/dtor command");
-        assert!(err.to_string().contains("ctor/dtor command is not supported yet"));
+        let err = validate_link_inputs(&[obj], &[], &[mk_summary(2, 0, 0)])
+            .expect_err("must reject ctor/dtor command");
+        assert!(err.to_string().contains(".ctor/.dtor は未対応です"));
     }
 
     #[test]
