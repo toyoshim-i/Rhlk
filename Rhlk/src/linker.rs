@@ -978,6 +978,7 @@ mod tests {
             cut_symbols: false,
             map: None,
             verbose: false,
+            quiet: false,
             inputs: vec!["foo.o".to_string()],
         };
         assert_eq!(resolve_output_path(&args, &args.inputs), "foo.x");
@@ -1020,6 +1021,7 @@ mod tests {
             cut_symbols: false,
             map: Some(String::new()),
             verbose: false,
+            quiet: false,
             inputs: vec![input.to_string_lossy().to_string()],
         };
         run(args).expect("run");
@@ -1053,6 +1055,7 @@ mod tests {
             cut_symbols: false,
             map: Some(map_path.to_string_lossy().to_string()),
             verbose: false,
+            quiet: false,
             inputs: vec![input.to_string_lossy().to_string()],
         };
         run(args).expect("run");

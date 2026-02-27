@@ -33,6 +33,9 @@ pub struct Args {
     #[arg(long = "verbose", short = 'v')]
     pub verbose: bool,
 
+    #[arg(long = "quiet", short = 'z')]
+    pub quiet: bool,
+
     #[arg(value_name = "INPUT")]
     pub inputs: Vec<String>,
 }
