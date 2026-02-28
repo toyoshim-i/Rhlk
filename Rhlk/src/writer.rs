@@ -902,39 +902,50 @@ fn build_object_initialized_sections(
     object: &ObjectFile,
     summary: &ObjectSummary,
 ) -> BTreeMap<SectionKind, Vec<u8>> {
-    let mut current = SectionKind::Text;
     let mut by_section = BTreeMap::<SectionKind, Vec<u8>>::new();
 
-    for cmd in &object.commands {
+    walk_commands(object, |cmd, current, local, _calc_stack| {
+        if !is_initialized_section(current) {
+            return;
+        }
         match cmd {
-            Command::ChangeSection { section } => {
-                current = SectionKind::from_u8(*section);
-            }
             Command::RawData(data) => {
-                if is_initialized_section(current) {
-                    by_section.entry(current).or_default().extend_from_slice(data);
+                let begin = u32_to_usize_saturating(local);
+                let end = begin.saturating_add(data.len());
+                let entry = by_section.entry(current).or_default();
+                if entry.len() < end {
+                    entry.resize(end, 0);
                 }
+                entry[begin..end].copy_from_slice(data);
             }
             Command::DefineSpace { size } => {
-                if is_initialized_section(current) {
-                    let entry = by_section.entry(current).or_default();
-                    let new_len = entry.len() + *size as usize;
-                    entry.resize(new_len, 0);
+                let end = u32_to_usize_saturating(local.saturating_add(*size));
+                let entry = by_section.entry(current).or_default();
+                if entry.len() < end {
+                    entry.resize(end, 0);
                 }
             }
             Command::Opaque { code, .. } => {
-                if is_initialized_section(current) {
-                    let write_size = opaque_write_size(*code) as usize;
-                    if write_size != 0 {
-                        let entry = by_section.entry(current).or_default();
-                        let new_len = entry.len() + write_size;
-                        entry.resize(new_len, 0);
-                    }
+                let write_size = usize::from(opaque_write_size(*code));
+                if write_size == 0 {
+                    return;
+                }
+                let begin = u32_to_usize_saturating(local);
+                let end = begin.saturating_add(write_size);
+                let entry = by_section.entry(current).or_default();
+                if entry.len() < end {
+                    entry.resize(end, 0);
                 }
             }
-            _ => {}
+            Command::Header { .. }
+            | Command::ChangeSection { .. }
+            | Command::DefineSymbol { .. }
+            | Command::Request { .. }
+            | Command::StartAddress { .. }
+            | Command::SourceFile { .. }
+            | Command::End => {}
         }
-    }
+    });
 
     for section in [SectionKind::Text, SectionKind::Data, SectionKind::RData, SectionKind::RLData] {
         let expected = section_size(summary, section) as usize;
@@ -1061,9 +1072,9 @@ fn compute_g2lk_synthetic_symbols(
     let mut ctor_count = 0u32;
     let mut dtor_count = 0u32;
     for obj in objects {
-        for cmd in &obj.commands {
+        walk_commands(obj, |cmd, _current, _local, _calc_stack| {
             let Command::Opaque { code, .. } = cmd else {
-                continue;
+                return;
             };
             match *code {
                 opcode::OP_DOCTOR => doctor = true,
@@ -1072,7 +1083,7 @@ fn compute_g2lk_synthetic_symbols(
                 opcode::OP_DTOR_ENTRY => dtor_count = dtor_count.saturating_add(1),
                 _ => {}
             }
-        }
+        });
     }
     let ctor_size = if doctor {
         8u32.saturating_add(ctor_count.saturating_mul(4))
@@ -1646,6 +1657,10 @@ fn u32_bits_to_i32(value: u32) -> i32 {
 
 fn usize_to_u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn u32_to_usize_saturating(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
 }
 
 #[derive(Clone, Copy)]

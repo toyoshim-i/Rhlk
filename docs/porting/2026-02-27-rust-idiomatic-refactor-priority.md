@@ -211,6 +211,8 @@
   - `writer.rs` の `collect_object_relocations` を共通 walker (`walk_opaque_commands`) へ寄せ、section/cursor 走査の重複実装を削減。
   - walker を `walk_commands` に拡張し、`validate_unsupported_expression_commands` の header 事前走査を統合（command 1-pass 化）。
   - 挙動確認: `./tools/run_quality_gate.sh` で `clippy` / `cargo test` / `run_hlkx_regression` 全通。
+  - `build_object_initialized_sections` の手書き `obj.commands` 走査を `walk_commands` へ統合し、section/cursor 管理の重複を削減。
+  - `compute_g2lk_synthetic_symbols` の opcode 集計も `walk_commands` 経由に統一。
 - P1-2: 着手（第一段）
   - `linker.rs` の `resolve_map_output` を `Option<&String>` から `Option<&str>` へ移行し、呼び出し側を `as_deref()` ベースに更新。
   - 文字列所有を要求しない API 形に寄せ、`Path/PathBuf` 中心化の前段整理を実施。
