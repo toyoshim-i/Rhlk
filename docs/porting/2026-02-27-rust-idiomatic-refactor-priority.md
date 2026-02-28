@@ -249,6 +249,8 @@
   - 可読性整理として `writer.rs` の SCD 処理ローカル変数を `tail_offset` / `sinfo_offset` などへ改名し、`6/12/18` のマジックナンバーを定数化。
   - `build_scd_xdef_map` の common 集約ロジックを `CommonSymbolStats` struct 化し、4要素タプル依存を解消。
   - `linker.rs` の request 解決候補生成を `push_candidate_variants` helper へ抽出し、検索順ロジックの重複を削減。
+  - `validate_unsupported_expression_commands` の ctor/dtor 関連状態を `CtorDtorUsage` へ集約し、分岐散在を削減。
+  - 同 `CtorDtorUsage` は bool 羅列ではなくビットマスクで状態管理し、可読性を維持しつつ `clippy::struct_excessive_bools` 警告を回避。
 
 検証:
 - `cargo test -q --manifest-path Cargo.toml`: pass

@@ -1775,7 +1775,90 @@ fn validate_link_inputs(
     validate_unsupported_expression_commands(objects, input_paths, summaries, g2lk_mode)
 }
 
-#[allow(clippy::similar_names)]
+#[derive(Default)]
+struct CtorDtorUsage {
+    seen_mask: u8,
+    ctor_count: usize,
+    dtor_count: usize,
+    ctor_header_size: Option<u32>,
+    dtor_header_size: Option<u32>,
+}
+
+impl CtorDtorUsage {
+    const SEEN_CTOR: u8 = 1 << 0;
+    const SEEN_DTOR: u8 = 1 << 1;
+    const SEEN_DOCTOR: u8 = 1 << 2;
+    const SEEN_DODTOR: u8 = 1 << 3;
+
+    fn has_seen(&self, flag: u8) -> bool {
+        self.seen_mask & flag != 0
+    }
+
+    fn set_seen(&mut self, flag: u8) {
+        self.seen_mask |= flag;
+    }
+
+    fn apply_opaque_code(&mut self, code: u16) {
+        match code {
+            opcode::OP_CTOR_ENTRY => {
+                self.set_seen(Self::SEEN_CTOR);
+                self.ctor_count += 1;
+            }
+            opcode::OP_DTOR_ENTRY => {
+                self.set_seen(Self::SEEN_DTOR);
+                self.dtor_count += 1;
+            }
+            opcode::OP_DOCTOR => self.set_seen(Self::SEEN_DOCTOR),
+            opcode::OP_DODTOR => self.set_seen(Self::SEEN_DODTOR),
+            _ => {}
+        }
+    }
+
+    fn set_header_size(&mut self, section: u8, size: u32) {
+        match section {
+            0x0c => self.ctor_header_size = Some(size),
+            0x0d => self.dtor_header_size = Some(size),
+            _ => {}
+        }
+    }
+
+    fn push_mode_diagnostics(&self, diagnostics: &mut Vec<String>, obj_name: &str, g2lk_mode: bool) {
+        if g2lk_mode {
+            if self.has_seen(Self::SEEN_CTOR) && !self.has_seen(Self::SEEN_DOCTOR) {
+                diagnostics.push(format!(".doctor なしで .ctor が使われています in {obj_name}"));
+            }
+            if self.has_seen(Self::SEEN_DTOR) && !self.has_seen(Self::SEEN_DODTOR) {
+                diagnostics.push(format!(".dodtor なしで .dtor が使われています in {obj_name}"));
+            }
+            return;
+        }
+        if self.seen_mask != 0 {
+            diagnostics.push(format!(
+                "(do)ctor/dtor には -1 オプションの指定が必要です。 in {obj_name}"
+            ));
+        }
+    }
+
+    fn push_header_size_diagnostics(&self, diagnostics: &mut Vec<String>, obj_name: &str) {
+        if let Some(size) = self.ctor_header_size {
+            let expected = usize_to_u32_saturating(self.ctor_count).saturating_mul(4);
+            if size != expected {
+                diagnostics.push(format!(
+                    "ctor header size mismatch in {obj_name}: header={size} expected={expected}"
+                ));
+            }
+        }
+        if let Some(size) = self.dtor_header_size {
+            let expected = usize_to_u32_saturating(self.dtor_count).saturating_mul(4);
+            if size != expected {
+                diagnostics.push(format!(
+                    "dtor header size mismatch in {obj_name}: header={size} expected={expected}"
+                ));
+            }
+        }
+    }
+}
+
 fn validate_unsupported_expression_commands(
     objects: &[ObjectFile],
     input_paths: &[String],
@@ -1796,34 +1879,11 @@ fn validate_unsupported_expression_commands(
             .and_then(|p| std::path::Path::new(p).file_name())
             .and_then(|s| s.to_str())
             .map_or_else(|| format!("obj{obj_idx}.o"), std::borrow::ToOwned::to_owned);
-        let mut has_ctor = false;
-        let mut has_dtor = false;
-        let mut has_doctor = false;
-        let mut has_dodtor = false;
-        let mut ctor_count = 0usize;
-        let mut dtor_count = 0usize;
-        let mut ctor_header_size = None::<u32>;
-        let mut dtor_header_size = None::<u32>;
+        let mut usage = CtorDtorUsage::default();
         walk_commands(obj, |cmd, current, local, calc_stack| match cmd {
-            Command::Header { section, size, .. } => match *section {
-                0x0c => ctor_header_size = Some(*size),
-                0x0d => dtor_header_size = Some(*size),
-                _ => {}
-            },
+            Command::Header { section, size, .. } => usage.set_header_size(*section, *size),
             Command::Opaque { code, .. } => {
-                match *code {
-                    opcode::OP_CTOR_ENTRY => {
-                        has_ctor = true;
-                        ctor_count += 1;
-                    }
-                    opcode::OP_DTOR_ENTRY => {
-                        has_dtor = true;
-                        dtor_count += 1;
-                    }
-                    opcode::OP_DOCTOR => has_doctor = true,
-                    opcode::OP_DODTOR => has_dodtor = true,
-                    _ => {}
-                }
+                usage.apply_opaque_code(*code);
                 let messages = expr::classify_expression_errors(
                     *code,
                     cmd,
@@ -1838,34 +1898,8 @@ fn validate_unsupported_expression_commands(
             }
             _ => {}
         });
-        if g2lk_mode {
-            if has_ctor && !has_doctor {
-                diagnostics.push(format!(".doctor なしで .ctor が使われています in {obj_name}"));
-            }
-            if has_dtor && !has_dodtor {
-                diagnostics.push(format!(".dodtor なしで .dtor が使われています in {obj_name}"));
-            }
-        } else if has_ctor || has_dtor || has_doctor || has_dodtor {
-            diagnostics.push(format!(
-                "(do)ctor/dtor には -1 オプションの指定が必要です。 in {obj_name}"
-            ));
-        }
-        if let Some(size) = ctor_header_size {
-            let expected = usize_to_u32_saturating(ctor_count).saturating_mul(4);
-            if size != expected {
-                diagnostics.push(format!(
-                    "ctor header size mismatch in {obj_name}: header={size} expected={expected}"
-                ));
-            }
-        }
-        if let Some(size) = dtor_header_size {
-            let expected = usize_to_u32_saturating(dtor_count).saturating_mul(4);
-            if size != expected {
-                diagnostics.push(format!(
-                    "dtor header size mismatch in {obj_name}: header={size} expected={expected}"
-                ));
-            }
-        }
+        usage.push_mode_diagnostics(&mut diagnostics, &obj_name, g2lk_mode);
+        usage.push_header_size_diagnostics(&mut diagnostics, &obj_name);
     }
     if diagnostics.is_empty() {
         return Ok(());
