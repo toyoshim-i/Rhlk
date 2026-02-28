@@ -1459,7 +1459,7 @@ fn materialize_opaque(
         | opcode::OPH_ADD_BYTE
         | opcode::OPH_ADD_XREF_BYTE
         | opcode::OPH_DISP_BYTE => Some(vec![i32_low_u8(value)]),
-        0x41
+        opcode::OPH_ABS_WORD_ALT
         | opcode::OPH_XREF_WORD
         | opcode::OPH_ADD_WORD_ALT
         | opcode::OPH_ADD_XREF_WORD
@@ -1551,7 +1551,7 @@ fn should_relocate(
     if is_reloc_section(lo) {
         return true;
     }
-    if lo == 0xff {
+    if is_xref_section(lo) {
         let Some(label_no) = read_u16_be(payload) else {
             return false;
         };
@@ -1595,6 +1595,10 @@ pub(super) fn is_common_or_xref_section(section: u8) -> bool {
         SectionKind::from_u8(section),
         SectionKind::RLCommon | SectionKind::RCommon | SectionKind::Common | SectionKind::Xref
     )
+}
+
+pub(super) fn is_xref_section(section: u8) -> bool {
+    matches!(SectionKind::from_u8(section), SectionKind::Xref)
 }
 
 fn bump_cursor(map: &mut BTreeMap<SectionKind, u32>, section: SectionKind, add: u32) {

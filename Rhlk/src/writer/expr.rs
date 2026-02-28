@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::format::obj::Command;
 use crate::resolver::{ObjectSummary, SectionKind, Symbol};
 
-use super::{ExprEntry, is_common_or_xref_section, opcode, read_i32_be, read_u16_be, reloc_section_kind};
+use super::{ExprEntry, is_common_or_xref_section, is_xref_section, opcode, read_i32_be, read_u16_be, reloc_section_kind};
 
 pub(super) fn classify_expression_errors(
     code: u16,
@@ -355,7 +355,7 @@ fn evaluate_direct_byte(
     global_symbols: &HashMap<Vec<u8>, Symbol>,
 ) -> Vec<&'static str> {
     if is_common_or_xref_section(lo) {
-        if lo != 0xff {
+        if !is_xref_section(lo) {
             return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
         }
         let Some(label_no) = read_u16_be(payload) else {
@@ -387,7 +387,7 @@ fn evaluate_direct_byte_with_offset(
     global_symbols: &HashMap<Vec<u8>, Symbol>,
 ) -> Vec<&'static str> {
     if is_common_or_xref_section(lo) {
-        if lo != 0xff {
+        if !is_xref_section(lo) {
             return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
         }
         let Some(label_no) = read_u16_be(payload) else {
@@ -423,7 +423,7 @@ fn evaluate_direct_word(
     current: SectionKind,
 ) -> Vec<&'static str> {
     if is_common_or_xref_section(lo) {
-        if lo != 0xff {
+        if !is_xref_section(lo) {
             return vec!["アドレス属性シンボルの値をワードサイズで出力"];
         }
         let Some(label_no) = read_u16_be(payload) else {
@@ -467,7 +467,7 @@ fn evaluate_direct_word_with_offset(
     current: SectionKind,
 ) -> Vec<&'static str> {
     if is_common_or_xref_section(lo) {
-        if lo != 0xff {
+        if !is_xref_section(lo) {
             return vec!["アドレス属性シンボルの値をワードサイズで出力"];
         }
         let Some(label_no) = read_u16_be(payload) else {
