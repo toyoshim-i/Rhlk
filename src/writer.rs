@@ -717,32 +717,57 @@ fn einfo_section_delta(
     placement: &BTreeMap<SectionKind, u32>,
     layout: &LayoutPlan,
 ) -> Option<i64> {
-    let text_total = i64::from(section_total(layout, SectionKind::Text));
-    let data_total = i64::from(section_total(layout, SectionKind::Data));
-    let bss_total = i64::from(section_total(layout, SectionKind::Bss));
-    let common_total = i64::from(section_total(layout, SectionKind::Common));
-    let stack_total = i64::from(section_total(layout, SectionKind::Stack));
-    let obj_size = text_total + data_total + bss_total + common_total + stack_total;
-
-    let text_pos = i64::from(placement.get(&SectionKind::Text).copied().unwrap_or(0));
-    let data_pos = text_total + i64::from(placement.get(&SectionKind::Data).copied().unwrap_or(0));
-    let bss_pos = text_total
-        + data_total
-        + i64::from(placement.get(&SectionKind::Bss).copied().unwrap_or(0));
-    let rdata_pos = i64::from(placement.get(&SectionKind::RData).copied().unwrap_or(0));
-    let rbss_pos = i64::from(placement.get(&SectionKind::RBss).copied().unwrap_or(0));
-    let rldata_pos = i64::from(placement.get(&SectionKind::RLData).copied().unwrap_or(0));
-    let rlbss_pos = i64::from(placement.get(&SectionKind::RLBss).copied().unwrap_or(0));
+    let totals = SectionTotals::from_layout(layout);
+    let pos = SectionPlacement::new(placement);
 
     match sect {
-        0x0001 => Some(text_pos),
-        0x0002 => Some(data_pos - text_total),
-        0x0003 => Some(bss_pos - obj_size),
-        0x0005 => Some(rdata_pos),
-        0x0006 => Some(rbss_pos),
-        0x0008 => Some(rldata_pos),
-        0x0009 => Some(rlbss_pos),
+        0x0001 => Some(pos.section(SectionKind::Text)),
+        0x0002 => Some(pos.section(SectionKind::Data)),
+        0x0003 => Some(totals.text + totals.data + pos.section(SectionKind::Bss) - totals.object_size()),
+        0x0005 => Some(pos.section(SectionKind::RData)),
+        0x0006 => Some(pos.section(SectionKind::RBss)),
+        0x0008 => Some(pos.section(SectionKind::RLData)),
+        0x0009 => Some(pos.section(SectionKind::RLBss)),
         _ => None,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SectionTotals {
+    text: i64,
+    data: i64,
+    bss: i64,
+    common: i64,
+    stack: i64,
+}
+
+impl SectionTotals {
+    fn from_layout(layout: &LayoutPlan) -> Self {
+        Self {
+            text: i64::from(section_total(layout, SectionKind::Text)),
+            data: i64::from(section_total(layout, SectionKind::Data)),
+            bss: i64::from(section_total(layout, SectionKind::Bss)),
+            common: i64::from(section_total(layout, SectionKind::Common)),
+            stack: i64::from(section_total(layout, SectionKind::Stack)),
+        }
+    }
+
+    fn object_size(self) -> i64 {
+        self.text + self.data + self.bss + self.common + self.stack
+    }
+}
+
+struct SectionPlacement<'a> {
+    placement: &'a BTreeMap<SectionKind, u32>,
+}
+
+impl SectionPlacement<'_> {
+    fn new(placement: &BTreeMap<SectionKind, u32>) -> SectionPlacement<'_> {
+        SectionPlacement { placement }
+    }
+
+    fn section(&self, section: SectionKind) -> i64 {
+        i64::from(self.placement.get(&section).copied().unwrap_or(0))
     }
 }
 
