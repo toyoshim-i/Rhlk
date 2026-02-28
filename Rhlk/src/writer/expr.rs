@@ -317,7 +317,7 @@ fn evaluate_wrt_stk_9100(calc_stack: &mut Vec<ExprEntry>, current: SectionKind) 
     if v.stat == 1 {
         return vec!["アドレス属性シンボルの値をワードサイズで出力"];
     }
-    if section_number(current) <= 4 {
+    if is_base_section(current) {
         if !fits_word2(v.value) {
             return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
         }
@@ -339,7 +339,7 @@ fn evaluate_wrt_stk_9900(calc_stack: &mut Vec<ExprEntry>, current: SectionKind) 
     if v.stat < 0 {
         return Vec::new();
     }
-    if v.stat == 1 || section_number(current) > 4 {
+    if v.stat == 1 || !is_base_section(current) {
         return vec!["アドレス属性シンボルの値をワードサイズで出力"];
     }
     if !fits_word2(v.value) {
@@ -440,7 +440,7 @@ fn evaluate_direct_word(
             if stat == 1 {
                 return vec!["アドレス属性シンボルの値をワードサイズで出力"];
             }
-            if section_number(current) <= 4 {
+            if is_base_section(current) {
                 if !fits_word2(value) {
                     return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
                 }
@@ -486,7 +486,7 @@ fn evaluate_direct_word_with_offset(
             if stat == 1 {
                 return vec!["アドレス属性シンボルの値をワードサイズで出力"];
             }
-            if section_number(current) <= 4 {
+            if is_base_section(current) {
                 if !fits_word2(total) {
                     return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
                 }
@@ -582,20 +582,11 @@ pub(super) fn section_stat(section: SectionKind) -> i16 {
     }
 }
 
-fn section_number(section: SectionKind) -> u8 {
-    match section {
-        SectionKind::Text => 1,
-        SectionKind::Data => 2,
-        SectionKind::Bss => 3,
-        SectionKind::Stack => 4,
-        SectionKind::RData => 5,
-        SectionKind::RBss => 6,
-        SectionKind::RStack => 7,
-        SectionKind::RLData => 8,
-        SectionKind::RLBss => 9,
-        SectionKind::RLStack => 10,
-        _ => 0,
-    }
+fn is_base_section(section: SectionKind) -> bool {
+    matches!(
+        section,
+        SectionKind::Text | SectionKind::Data | SectionKind::Bss | SectionKind::Stack
+    )
 }
 
 fn fits_byte(v: i32) -> bool {
