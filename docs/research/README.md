@@ -8,5 +8,6 @@
 - `2026-02-26-object-format-notes.md`
   - オブジェクト形式の調査メモ。
 
-## 使い方
-- ここは「調査メモ置き場」。実装方針・最終仕様は `docs/porting/` 側を正とする。
+## 位置づけ
+- ここは一次調査メモ置き場（Reference/Historical 扱い）。
+- 実装方針・最終仕様は `docs/porting/DOCUMENT_MAP.md` の Authoritative を正とする。

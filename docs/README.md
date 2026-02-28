@@ -1,19 +1,19 @@
 # Rhlk Docs Index
 
-## まず読む
+## 入口
 - `porting/README.md`
-  - 移植ドキュメントの最新インデックス。
-- `porting/2026-02-27-test-guide.md`
-  - テスト環境構築と実行手順。
-- `porting/2026-02-27-final-executable-compare.md`
-  - 原版 HLK と Rhlk の最終生成物比較結果。
+  - 実装・検証・運用の正本インデックス。
+- `porting/DOCUMENT_MAP.md`
+  - `docs/porting` 各文書の役割（Authoritative / Reference / Historical）一覧。
+- `research/README.md`
+  - 事前調査メモの一覧。
 
-## ディレクトリ構成
+## 構成
 - `research/`
-  - 仕様調査メモ（一次調査の記録）。
+  - 一次調査メモ。原則として追記より参照用途。
 - `porting/`
-  - 実装方針、回帰運用、監査、実装後の確定ポリシー。
+  - 実装方針、回帰運用、監査、最終ポリシー。
 
 ## 運用
-- 新しい最終判断は `porting/README.md` の「現在の正」に追記する。
-- 過去の時点記録は既存ファイルを上書きせず、履歴として残す。
+- 新しい判断は `porting/README.md` と `porting/DOCUMENT_MAP.md` を先に更新する。
+- 履歴メモは上書きせず残し、必要なら新規文書を追加する。
