@@ -251,3 +251,11 @@
 - `cargo test -q --manifest-path Cargo.toml`: pass
 - `./tools/run_hlkx_regression.sh`: All regression cases matched
 - `cargo clippy --all-targets --all-features -- -W clippy::all -W clippy::pedantic`: pass
+
+## 残存 `allow(clippy::...)`（2026-02-28 時点）
+- `src/cli.rs` の `struct_excessive_bools`:
+  - CLI 互換オプション仕様（HLK 互換）をそのまま `clap` で受ける都合で、bool フラグが多いのは設計上許容。
+- `src/writer.rs` の `similar_names`（SCD 解析/検証系）:
+  - `linfo/sinfo/einfo/ninfo` は元仕様用語に直結しており、安易なリネームよりドメイン語彙維持を優先。
+- `src/writer/tests.rs` の `too_many_lines`:
+  - 仕様差分を追跡しやすくするため、大規模統合テストはケース密集を維持。
