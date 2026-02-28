@@ -11,7 +11,7 @@ Rhlk のテストを、ローカル環境で再現可能な形で実行するた
   - 定義: `.github/workflows/ci.yml`
   - 対象: `clippy` + Rust test（`cargo test`）
   - トリガー: `push`（`main`）, `pull_request`, `workflow_dispatch`
-  - 補足: HLK 互換回帰は外部ツール依存が大きいため、現状は CI 対象外（ローカル実行）
+  - 補足: HLK 互換回帰は `workflow_dispatch` の `run_compat=true` 指定時のみ実行
 - Rust unit/integration test
   - 対象: `src/*` の unit test、`tests/*` の integration test
   - 実行: `cargo test`
@@ -77,6 +77,10 @@ cargo test -q --manifest-path Cargo.toml
 ```bash
 ./tools/run_hlkx_regression.sh
 ```
+
+2.4 GitHub Actions で互換回帰を手動実行
+- Actions の `CI` ワークフローを `Run workflow` で起動
+- `run_compat` を `true` にして実行
 
 3. メッセージカバレッジ監査（任意）
 ```bash

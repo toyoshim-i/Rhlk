@@ -6,6 +6,12 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      run_compat:
+        description: "Run HLK compatibility regression (run68-based)"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -37,3 +43,36 @@ jobs:
       - name: Unit tests
         run: cargo test
 
+  compat-regression:
+    name: Compatibility Regression (manual)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_compat
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake unzip ripgrep
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build run68x
+        run: |
+          cmake -S external/run68x -B external/run68x/build
+          cmake --build external/run68x/build
+
+      - name: Setup Human68k binaries
+        run: ./tools/setup_human68k_binaries.sh
+
+      - name: Run compatibility regression
+        run: ./tools/run_hlkx_regression.sh
