@@ -13,6 +13,7 @@ Rhlk のテストを、ローカル環境で再現可能な形で実行するた
 - HLK 互換回帰テスト（run68 ベース）
   - 対象: `external/hlkx/tests` を入力に、原版 HLK と rhlk の出力比較
   - 比較: messages（stdout+stderr 結合後）、終了コード、生成物 (`.x/.r/.mcs/.map`)
+  - 生成物判定: 原版 HLK が `rc=0` のケースで期待生成物の存在を必須化し、存在時はバイト一致を必須化
   - 実行: `./tools/run_hlkx_regression.sh`
 - エラーメッセージ網羅監査
   - 対象: 主要エラーメッセージ 16 パターンのカバー状況

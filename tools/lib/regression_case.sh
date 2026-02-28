@@ -70,8 +70,26 @@ compare_case() {
     failed=1
   fi
 
+  local orig_map="${orig_prefix}.map"
+  local rhlk_map="${rhlk_prefix}.map"
+  local orig_rc rhlk_rc
+  orig_rc="$(cat "${orig_prefix}.rc")"
+  rhlk_rc="$(cat "${rhlk_prefix}.rc")"
+
+  # ext column denotes the canonical output artifact for this case.
+  # If original HLK succeeds, both sides must produce it and match byte-for-byte.
   local orig_out="${orig_prefix}.${ext}"
   local rhlk_out="${rhlk_prefix}.${ext}"
+  if [[ "${orig_rc}" == "0" ]]; then
+    if [[ ! -f "${orig_out}" ]]; then
+      echo "[${name}] original HLK succeeded but did not produce ${ext}" >>"${diff_file}"
+      failed=1
+    fi
+    if [[ "${rhlk_rc}" == "0" && ! -f "${rhlk_out}" ]]; then
+      echo "[${name}] rhlk succeeded but did not produce ${ext}" >>"${diff_file}"
+      failed=1
+    fi
+  fi
   if [[ -f "${orig_out}" || -f "${rhlk_out}" ]]; then
     if [[ ! -f "${orig_out}" || ! -f "${rhlk_out}" ]]; then
       echo "[${name}] output existence differs (${ext})" >>"${diff_file}"
@@ -81,12 +99,6 @@ compare_case() {
       failed=1
     fi
   fi
-
-  local orig_map="${orig_prefix}.map"
-  local rhlk_map="${rhlk_prefix}.map"
-  local orig_rc rhlk_rc
-  orig_rc="$(cat "${orig_prefix}.rc")"
-  rhlk_rc="$(cat "${rhlk_prefix}.rc")"
   if [[ "${orig_rc}" == "0" && "${rhlk_rc}" == "0" && ( -f "${orig_map}" || -f "${rhlk_map}" ) ]]; then
     if [[ ! -f "${orig_map}" || ! -f "${rhlk_map}" ]]; then
       echo "[${name}] map output existence differs" >>"${diff_file}"
