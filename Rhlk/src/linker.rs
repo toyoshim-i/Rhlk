@@ -126,7 +126,7 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
     }
 
     let output = resolve_output_path(args, &expanded_inputs);
-    let output_s = output.to_string_lossy().to_string();
+    let output_s = output.to_string_lossy();
     let options = OutputOptions {
         format: match runtime.output_request {
             OutputRequest::X => OutputFormat::X,
@@ -151,7 +151,7 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
         g2lk_mode: matches!(runtime.g2lk_mode, G2lkMode::On),
     };
     write_output(
-        &output_s,
+        output_s.as_ref(),
         options,
         &objects,
         &input_names,
@@ -162,8 +162,14 @@ fn emit_outputs(prepared: PreparedLink) -> anyhow::Result<()> {
         println!("wrote output: {}", output.display());
     }
     if let Some(map_output) = resolve_map_output(args.map.as_deref(), Some(output.as_path()), &expanded_inputs) {
-        let map_output_s = map_output.to_string_lossy().to_string();
-        write_map(&output_s, &map_output_s, &summaries, &layout, &input_names)?;
+        let map_output_s = map_output.to_string_lossy();
+        write_map(
+            output_s.as_ref(),
+            map_output_s.as_ref(),
+            &summaries,
+            &layout,
+            &input_names,
+        )?;
         if runtime.verbose {
             println!("wrote map: {}", map_output.display());
         }
@@ -672,20 +678,22 @@ fn enqueue_requests(
 fn resolve_requested_path(base_dir: &Path, req_name: &str) -> Option<PathBuf> {
     let req = Path::new(req_name);
     let mut candidates = Vec::<PathBuf>::new();
-    let mut add_candidates = |base: PathBuf| {
-        candidates.push(base.clone());
-        // For extension-less request names, try common object/library suffixes.
-        if base.extension().is_none() {
+    if req.is_absolute() {
+        candidates.push(req.to_path_buf());
+        if req.extension().is_none() {
             for ext in ["o", "obj", "a", "lib"] {
-                candidates.push(base.with_extension(ext));
+                candidates.push(req.with_extension(ext));
             }
         }
-    };
-    if req.is_absolute() {
-        add_candidates(req.to_path_buf());
     } else {
-        add_candidates(base_dir.join(req));
-        add_candidates(PathBuf::from(req));
+        for base in [base_dir.join(req), PathBuf::from(req)] {
+            candidates.push(base.clone());
+            if base.extension().is_none() {
+                for ext in ["o", "obj", "a", "lib"] {
+                    candidates.push(base.with_extension(ext));
+                }
+            }
+        }
     }
     candidates.into_iter().find(|c| c.exists())
 }
