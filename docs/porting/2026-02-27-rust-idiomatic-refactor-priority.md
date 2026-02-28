@@ -253,6 +253,7 @@
   - 同 `CtorDtorUsage` は bool 羅列ではなくビットマスクで状態管理し、可読性を維持しつつ `clippy::struct_excessive_bools` 警告を回避。
   - `build_scd_passthrough` の tail 切り出し処理を `parse_scd_tail_view` (`ScdTailView`) に分離し、メインループを「line/info/name の再配置処理」中心に簡素化。
   - `validate_unsupported_expression_commands` のグローバルシンボル収集を `collect_global_symbols` に切り出し、責務を明確化。
+  - `linker.rs` の `parse_ar_members` で member header 解析を `parse_ar_member_header` (`ArMemberHeader`) に分離し、特殊メンバー分岐とヘッダ解析責務を分離。
 
 検証:
 - `cargo test -q --manifest-path Cargo.toml`: pass

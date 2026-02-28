@@ -722,41 +722,32 @@ fn is_ar_archive(bytes: &[u8]) -> bool {
 }
 
 fn parse_ar_members(bytes: &[u8]) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+    const GLOBAL_HEADER_SIZE: usize = 8;
     if !is_ar_archive(bytes) {
         anyhow::bail!("not ar archive");
     }
     let mut out = Vec::new();
     let mut gnu_long_names: Option<Vec<u8>> = None;
-    let mut pos = 8usize;
+    let mut pos = GLOBAL_HEADER_SIZE;
     while pos < bytes.len() {
-        if bytes.len().saturating_sub(pos) < 60 {
-            anyhow::bail!("invalid ar header");
-        }
-        let hdr = &bytes[pos..pos + 60];
-        pos += 60;
-        if &hdr[58..60] != b"`\n" {
-            anyhow::bail!("invalid ar header magic");
-        }
-        let size_str = std::str::from_utf8(&hdr[48..58])?.trim();
-        let size = size_str.parse::<usize>()?;
-        if bytes.len().saturating_sub(pos) < size {
+        let header = parse_ar_member_header(bytes, &mut pos)?;
+        if bytes.len().saturating_sub(pos) < header.size {
             anyhow::bail!("invalid ar member size");
         }
-        let raw_name = std::str::from_utf8(&hdr[0..16])?.trim().to_string();
-        let mut data = bytes[pos..pos + size].to_vec();
-        pos += size;
+        let mut data = bytes[pos..pos + header.size].to_vec();
+        pos += header.size;
         if pos % 2 == 1 {
             pos = pos.saturating_add(1);
         }
 
-        if raw_name == "/" {
+        if header.raw_name == "/" {
             continue;
         }
-        if raw_name == "//" {
+        if header.raw_name == "//" {
             gnu_long_names = Some(data);
             continue;
         }
-        if let Some(rest) = raw_name.strip_prefix("#1/") {
+        if let Some(rest) = header.raw_name.strip_prefix("#1/") {
             let n = rest.parse::<usize>()?;
             if data.len() < n {
                 anyhow::bail!("invalid BSD ar extended name");
@@ -766,7 +757,7 @@ fn parse_ar_members(bytes: &[u8]) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
             out.push((name, data));
             continue;
         }
-        if let Some(rest) = raw_name.strip_prefix('/') {
+        if let Some(rest) = header.raw_name.strip_prefix('/') {
             if let Ok(offset) = rest.parse::<usize>() {
                 if let Some(name) = resolve_gnu_long_name(gnu_long_names.as_deref(), offset) {
                     out.push((name, data));
@@ -774,11 +765,32 @@ fn parse_ar_members(bytes: &[u8]) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
                 }
                 anyhow::bail!("invalid GNU long-name reference: /{offset}");
             }
-            anyhow::bail!("unsupported ar special member name: {raw_name}");
+            anyhow::bail!("unsupported ar special member name: {}", header.raw_name);
         }
-        out.push((trim_member_name(&raw_name), data));
+        out.push((trim_member_name(&header.raw_name), data));
     }
     Ok(out)
+}
+
+struct ArMemberHeader {
+    raw_name: String,
+    size: usize,
+}
+
+fn parse_ar_member_header(bytes: &[u8], pos: &mut usize) -> anyhow::Result<ArMemberHeader> {
+    const MEMBER_HEADER_SIZE: usize = 60;
+    if bytes.len().saturating_sub(*pos) < MEMBER_HEADER_SIZE {
+        anyhow::bail!("invalid ar header");
+    }
+    let header_bytes = &bytes[*pos..*pos + MEMBER_HEADER_SIZE];
+    *pos += MEMBER_HEADER_SIZE;
+    if &header_bytes[58..60] != b"`\n" {
+        anyhow::bail!("invalid ar header magic");
+    }
+    let size_str = std::str::from_utf8(&header_bytes[48..58])?.trim();
+    let size = size_str.parse::<usize>()?;
+    let raw_name = std::str::from_utf8(&header_bytes[0..16])?.trim().to_string();
+    Ok(ArMemberHeader { raw_name, size })
 }
 
 fn select_archive_members(
