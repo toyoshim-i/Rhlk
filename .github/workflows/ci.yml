@@ -137,3 +137,61 @@ jobs:
 
       - name: Run compatibility regression
         run: ./tools/run_hlkx_regression.sh
+
+  publish-compat-badge:
+    name: Publish Compatibility Badge
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.run_compat && github.ref == 'refs/heads/main'
+    needs:
+      - compat-regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Update compatibility badge json
+        env:
+          COMPAT_RESULT: ${{ needs.compat-regression.result }}
+          SHA7: ${{ github.sha }}
+        run: |
+          mkdir -p docs/badges
+          short_sha="${SHA7:0:7}"
+          case "${COMPAT_RESULT}" in
+            success)
+              color="brightgreen"
+              message="${short_sha} passing"
+              ;;
+            failure)
+              color="red"
+              message="${short_sha} failing"
+              ;;
+            cancelled)
+              color="lightgray"
+              message="${short_sha} cancelled"
+              ;;
+            *)
+              color="yellow"
+              message="${short_sha} ${COMPAT_RESULT}"
+              ;;
+          esac
+          cat > docs/badges/compat-manual.json <<EOF
+          {
+            "schemaVersion": 1,
+            "label": "compat manual",
+            "message": "${message}",
+            "color": "${color}"
+          }
+          EOF
+
+      - name: Commit compatibility badge update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/badges/compat-manual.json
+          if git diff --cached --quiet; then
+            echo "No badge changes"
+            exit 0
+          fi
+          git commit -m "chore(ci): update manual compat badge [skip ci]"
+          git push
