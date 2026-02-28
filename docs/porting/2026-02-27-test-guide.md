@@ -12,6 +12,8 @@ Rhlk のテストを、ローカル環境で再現可能な形で実行するた
   - 対象: `clippy` + Rust test（`cargo test`）
   - トリガー: `push`（`main`）, `pull_request`, `workflow_dispatch`
   - 補足: HLK 互換回帰は `workflow_dispatch` の `run_compat=true` 指定時のみ実行
+  - バッジ: `README.md` の `CI Main Status` は `docs/badges/ci-main.json` を endpoint 表示
+  - 更新: `main` への `push` 後、`rust-check` 結果に応じて `Publish Main Badge` ジョブが自動更新
 - Rust unit/integration test
   - 対象: `src/*` の unit test、`tests/*` の integration test
   - 実行: `cargo test`

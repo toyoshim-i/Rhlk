@@ -17,6 +17,9 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   rust-check:
     name: Rust Check (clippy + test)
@@ -42,6 +45,64 @@ jobs:
 
       - name: Unit tests
         run: cargo test
+
+  publish-main-badge:
+    name: Publish Main Badge
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - rust-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Update badge json
+        env:
+          RUST_CHECK_RESULT: ${{ needs.rust-check.result }}
+          SHA7: ${{ github.sha }}
+        run: |
+          mkdir -p docs/badges
+          short_sha="${SHA7:0:7}"
+          case "${RUST_CHECK_RESULT}" in
+            success)
+              color="brightgreen"
+              message="${short_sha} passing"
+              ;;
+            failure)
+              color="red"
+              message="${short_sha} failing"
+              ;;
+            cancelled)
+              color="lightgray"
+              message="${short_sha} cancelled"
+              ;;
+            *)
+              color="yellow"
+              message="${short_sha} ${RUST_CHECK_RESULT}"
+              ;;
+          esac
+          cat > docs/badges/ci-main.json <<EOF
+          {
+            "schemaVersion": 1,
+            "label": "CI main",
+            "message": "${message}",
+            "color": "${color}"
+          }
+          EOF
+
+      - name: Commit badge update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/badges/ci-main.json
+          if git diff --cached --quiet; then
+            echo "No badge changes"
+            exit 0
+          fi
+          git commit -m "chore(ci): update main badge [skip ci]"
+          git push
 
   compat-regression:
     name: Compatibility Regression (manual)
