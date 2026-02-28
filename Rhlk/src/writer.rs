@@ -1431,10 +1431,10 @@ fn evaluate_push_80_for_patch(
             value: u32_bits_to_i32(sym.addr),
         });
     }
-    if reloc_section_kind(lo).is_some() || lo == 0x00 {
+    if reloc_section_kind(lo).is_some() || is_abs_section(lo) {
         let value = read_i32_be(payload)?;
         let stat = match lo {
-            0x00 => 0,
+            s if is_abs_section(s) => 0,
             0x01..=0x04 => 1,
             _ => 2,
         };
@@ -1508,7 +1508,7 @@ fn resolve_opaque_value(
     } else if reloc_section_kind(lo).is_some() {
         let v = read_i32_be(payload)?;
         section_value_with_placement(lo, v, placement)?
-    } else if lo == 0x00 {
+    } else if is_abs_section(lo) {
         read_i32_be(payload)?
     } else {
         return None;
@@ -1599,6 +1599,10 @@ pub(super) fn is_common_or_xref_section(section: u8) -> bool {
 
 pub(super) fn is_xref_section(section: u8) -> bool {
     matches!(SectionKind::from_u8(section), SectionKind::Xref)
+}
+
+pub(super) fn is_abs_section(section: u8) -> bool {
+    matches!(SectionKind::from_u8(section), SectionKind::Abs)
 }
 
 fn bump_cursor(map: &mut BTreeMap<SectionKind, u32>, section: SectionKind, add: u32) {

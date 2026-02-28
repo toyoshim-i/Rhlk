@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::format::obj::Command;
 use crate::resolver::{ObjectSummary, SectionKind, Symbol};
 
-use super::{ExprEntry, is_common_or_xref_section, is_xref_section, opcode, read_i32_be, read_u16_be, reloc_section_kind};
+use super::{ExprEntry, is_abs_section, is_common_or_xref_section, is_xref_section, opcode, read_i32_be, read_u16_be, reloc_section_kind};
 
 pub(super) fn classify_expression_errors(
     code: u16,
@@ -70,10 +70,10 @@ fn evaluate_push_80(
         };
         return Some(ExprEntry { stat, value });
     }
-    if reloc_section_kind(lo).is_some() || lo == 0x00 {
+    if reloc_section_kind(lo).is_some() || is_abs_section(lo) {
         let value = read_i32_be(payload)?;
         let stat = match lo {
-            0x00 => 0,
+            s if is_abs_section(s) => 0,
             0x01..=0x04 => 1,
             _ => 2,
         };

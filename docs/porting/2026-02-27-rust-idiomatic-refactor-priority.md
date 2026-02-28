@@ -209,6 +209,7 @@
   - `writer.rs` の section code 判定を `SectionKind::from_u8` ベースの helper (`reloc_section_kind`, `is_common_or_xref_section`) に整理し、range/literal 判定を削減。
   - 上記 section 判定 helper を `writer/expr.rs` にも適用し、`0xfc..=0xff` / `0x01..=0x0a` の重複判定を共通化。
   - `Xref` 判定を `is_xref_section` helper へ抽出し、`0xff` 直書きを削減。`writer.rs` の残存 `0x41` 分岐も `OPH_ABS_WORD_ALT` へ統一。
+  - `ABS` 判定も `is_abs_section` helper へ抽出し、`0x00` 直書き分岐を `writer`/`expr` で共通化。
 - P1-3: 着手（第一段）
   - `writer.rs` の `collect_object_relocations` を共通 walker (`walk_opaque_commands`) へ寄せ、section/cursor 走査の重複実装を削減。
   - walker を `walk_commands` に拡張し、`validate_unsupported_expression_commands` の header 事前走査を統合（command 1-pass 化）。
