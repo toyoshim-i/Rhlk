@@ -48,13 +48,24 @@ jobs:
 
   publish-main-badge:
     name: Publish Main Badge
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.BADGE_REPO != ''
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs:
       - rust-check
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
+      - name: Preflight
+        env:
+          BADGE_REPO: ${{ vars.BADGE_REPO }}
+        run: |
+          echo "event=${{ github.event_name }}"
+          echo "ref=${{ github.ref }}"
+          if [[ -z "${BADGE_REPO}" ]]; then
+            echo "BADGE_REPO variable is empty. Set Settings -> Secrets and variables -> Actions -> Variables -> BADGE_REPO" >&2
+            exit 1
+          fi
+
       - name: Checkout badge repository
         uses: actions/checkout@v4
         with:
@@ -147,13 +158,25 @@ jobs:
 
   publish-compat-badge:
     name: Publish Compatibility Badge
-    if: always() && github.event_name == 'workflow_dispatch' && inputs.run_compat && github.ref == 'refs/heads/main' && vars.BADGE_REPO != ''
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.run_compat && github.ref == 'refs/heads/main'
     needs:
       - compat-regression
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
+      - name: Preflight
+        env:
+          BADGE_REPO: ${{ vars.BADGE_REPO }}
+        run: |
+          echo "event=${{ github.event_name }}"
+          echo "ref=${{ github.ref }}"
+          echo "run_compat=${{ inputs.run_compat }}"
+          if [[ -z "${BADGE_REPO}" ]]; then
+            echo "BADGE_REPO variable is empty. Set Settings -> Secrets and variables -> Actions -> Variables -> BADGE_REPO" >&2
+            exit 1
+          fi
+
       - name: Checkout badge repository
         uses: actions/checkout@v4
         with:
