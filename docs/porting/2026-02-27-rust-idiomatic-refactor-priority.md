@@ -236,6 +236,7 @@
   - `resolve_output_path` で不要な `PathBuf` 一時変数を削除し、`inputs.first()` 参照から直接 stem/parent を導出する形へ簡素化。
   - `linker` テストの単一入力ケースを `Vec` 生成から `std::slice::from_ref` へ置換し、不要 clone/一時確保を削減。
   - `resolve_lib_inputs` の検索パス初期化を `args.lib_paths.clone()` ベースへ簡素化し、push ループを削減。
+  - `run_writes_map_*` テストで `input.clone()` を排除し、`PathBuf` を move して後始末は `dir.join(...)` 参照へ統一。
 
 検証:
 - `cargo test -q --manifest-path Rhlk/Cargo.toml`: pass

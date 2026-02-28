@@ -1503,13 +1503,13 @@ mod tests {
             use_env_lib: false,
             g2lk_off: false,
             g2lk_on: false,
-            inputs: vec![input.clone()],
+            inputs: vec![input],
         };
         run(args).expect("run");
         assert!(dir.join("foo.map").exists());
 
         let _ = fs::remove_file(dir.join("foo.map"));
-        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(dir.join("foo.o"));
         let _ = fs::remove_dir(dir);
     }
 
@@ -1550,13 +1550,13 @@ mod tests {
             use_env_lib: false,
             g2lk_off: false,
             g2lk_on: false,
-            inputs: vec![input.clone()],
+            inputs: vec![input],
         };
         run(args).expect("run");
         assert!(dir.join("bar.map").exists());
 
         let _ = fs::remove_file(dir.join("bar.map"));
-        let _ = fs::remove_file(input);
+        let _ = fs::remove_file(dir.join("foo.o"));
         let _ = fs::remove_dir(dir);
     }
 
