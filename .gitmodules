@@ -1,6 +1,7 @@
 [submodule "external/hlkx"]
 	path = external/hlkx
 	url = https://github.com/kg68k/hlkx.git
+	ignore = dirty
 [submodule "external/hlk-ev"]
 	path = external/hlk-ev
 	url = https://github.com/kg68k/hlk-ev.git
@@ -13,3 +14,4 @@
 [submodule "external/has060xx"]
 	path = external/has060xx
 	url = https://github.com/kg68k/has060xx.git
+	ignore = dirty
