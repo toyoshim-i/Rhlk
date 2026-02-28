@@ -1573,7 +1573,7 @@ fn is_reloc_section(sect: u8) -> bool {
     reloc_section_kind(sect).is_some()
 }
 
-fn reloc_section_kind(section: u8) -> Option<SectionKind> {
+pub(super) fn reloc_section_kind(section: u8) -> Option<SectionKind> {
     let kind = SectionKind::from_u8(section);
     match kind {
         SectionKind::Text
@@ -1590,7 +1590,7 @@ fn reloc_section_kind(section: u8) -> Option<SectionKind> {
     }
 }
 
-fn is_common_or_xref_section(section: u8) -> bool {
+pub(super) fn is_common_or_xref_section(section: u8) -> bool {
     matches!(
         SectionKind::from_u8(section),
         SectionKind::RLCommon | SectionKind::RCommon | SectionKind::Common | SectionKind::Xref

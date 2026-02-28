@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::format::obj::Command;
 use crate::resolver::{ObjectSummary, SectionKind, Symbol};
 
-use super::{ExprEntry, opcode, read_i32_be, read_u16_be};
+use super::{ExprEntry, is_common_or_xref_section, opcode, read_i32_be, read_u16_be, reloc_section_kind};
 
 pub(super) fn classify_expression_errors(
     code: u16,
@@ -60,7 +60,7 @@ fn evaluate_push_80(
     summary: &ObjectSummary,
     global_symbols: &HashMap<Vec<u8>, Symbol>,
 ) -> Option<ExprEntry> {
-    if matches!(lo, 0xfc..=0xff) {
+    if is_common_or_xref_section(lo) {
         let label_no = read_u16_be(payload)?;
         let (section, value) = resolve_xref(label_no, summary, global_symbols)?;
         let stat = match section_stat(section) {
@@ -70,7 +70,7 @@ fn evaluate_push_80(
         };
         return Some(ExprEntry { stat, value });
     }
-    if lo <= 0x0a {
+    if reloc_section_kind(lo).is_some() || lo == 0x00 {
         let value = read_i32_be(payload)?;
         let stat = match lo {
             0x00 => 0,
@@ -354,7 +354,7 @@ fn evaluate_direct_byte(
     summary: &ObjectSummary,
     global_symbols: &HashMap<Vec<u8>, Symbol>,
 ) -> Vec<&'static str> {
-    if matches!(lo, 0xfc..=0xff) {
+    if is_common_or_xref_section(lo) {
         if lo != 0xff {
             return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
         }
@@ -386,7 +386,7 @@ fn evaluate_direct_byte_with_offset(
     summary: &ObjectSummary,
     global_symbols: &HashMap<Vec<u8>, Symbol>,
 ) -> Vec<&'static str> {
-    if matches!(lo, 0xfc..=0xff) {
+    if is_common_or_xref_section(lo) {
         if lo != 0xff {
             return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
         }
@@ -422,7 +422,7 @@ fn evaluate_direct_word(
     global_symbols: &HashMap<Vec<u8>, Symbol>,
     current: SectionKind,
 ) -> Vec<&'static str> {
-    if matches!(lo, 0xfc..=0xff) {
+    if is_common_or_xref_section(lo) {
         if lo != 0xff {
             return vec!["アドレス属性シンボルの値をワードサイズで出力"];
         }
@@ -466,7 +466,7 @@ fn evaluate_direct_word_with_offset(
     global_symbols: &HashMap<Vec<u8>, Symbol>,
     current: SectionKind,
 ) -> Vec<&'static str> {
-    if matches!(lo, 0xfc..=0xff) {
+    if is_common_or_xref_section(lo) {
         if lo != 0xff {
             return vec!["アドレス属性シンボルの値をワードサイズで出力"];
         }
