@@ -20,7 +20,7 @@ pub(super) fn classify_expression_errors(
         _ => &[],
     };
     match hi {
-        0x80 => {
+        opcode::OPH_PUSH_VALUE_BASE => {
             if calc_stack.len() >= CALC_STACK_SIZE_HLK {
                 return vec!["計算用スタックが溢れました"];
             }
@@ -29,7 +29,7 @@ pub(super) fn classify_expression_errors(
             }
             Vec::new()
         }
-        0xa0 => evaluate_a0(lo, calc_stack),
+        opcode::OPH_EXPR_BASE => evaluate_a0(lo, calc_stack),
         opcode::OPH_WRT_STK_BYTE => evaluate_wrt_stk_9000(calc_stack),
         opcode::OPH_WRT_STK_WORD_TEXT => evaluate_wrt_stk_9100(calc_stack, current),
         opcode::OPH_WRT_STK_LONG | opcode::OPH_WRT_STK_LONG_ALT | opcode::OPH_WRT_STK_LONG_RELOC => {
@@ -37,13 +37,19 @@ pub(super) fn classify_expression_errors(
         }
         opcode::OPH_WRT_STK_BYTE_RAW => evaluate_wrt_stk_9300(calc_stack),
         opcode::OPH_WRT_STK_WORD_RELOC => evaluate_wrt_stk_9900(calc_stack, current),
-        0x40 | 0x43 => evaluate_direct_byte(lo, payload, summary, global_symbols),
-        0x50 | 0x53 => evaluate_direct_byte_with_offset(lo, payload, summary, global_symbols),
-        0x41 => evaluate_direct_word(lo, payload, summary, global_symbols, current),
-        0x51 => evaluate_direct_word_with_offset(lo, payload, summary, global_symbols, current),
-        0x65 => evaluate_rel_word(payload, summary, global_symbols),
-        0x6a => evaluate_d32_adrs(payload, summary, global_symbols),
-        0x6b => evaluate_rel_byte(payload, summary, global_symbols),
+        opcode::OPH_ABS_WORD | opcode::OPH_ABS_BYTE => {
+            evaluate_direct_byte(lo, payload, summary, global_symbols)
+        }
+        opcode::OPH_ADD_WORD | opcode::OPH_ADD_BYTE => {
+            evaluate_direct_byte_with_offset(lo, payload, summary, global_symbols)
+        }
+        opcode::OPH_ABS_WORD_ALT => evaluate_direct_word(lo, payload, summary, global_symbols, current),
+        opcode::OPH_ADD_WORD_ALT => {
+            evaluate_direct_word_with_offset(lo, payload, summary, global_symbols, current)
+        }
+        opcode::OPH_DISP_WORD => evaluate_rel_word(payload, summary, global_symbols),
+        opcode::OPH_DISP_LONG => evaluate_d32_adrs(payload, summary, global_symbols),
+        opcode::OPH_DISP_BYTE => evaluate_rel_byte(payload, summary, global_symbols),
         _ => Vec::new(),
     }
 }

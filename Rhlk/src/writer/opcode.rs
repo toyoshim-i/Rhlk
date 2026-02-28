@@ -7,12 +7,14 @@ pub const OPH_PUSH_VALUE_BASE: u8 = 0x80;
 pub const OPH_EXPR_BASE: u8 = 0xa0;
 
 pub const OPH_ABS_WORD: u8 = 0x40;
+pub const OPH_ABS_WORD_ALT: u8 = 0x41;
 pub const OPH_ABS_LONG: u8 = 0x42;
 pub const OPH_ABS_BYTE: u8 = 0x43;
 pub const OPH_XREF_WORD: u8 = 0x45;
 pub const OPH_XREF_LONG: u8 = 0x46;
 pub const OPH_XREF_BYTE: u8 = 0x47;
 pub const OPH_ADD_WORD: u8 = 0x50;
+pub const OPH_ADD_WORD_ALT: u8 = 0x51;
 pub const OPH_ADD_LONG: u8 = 0x52;
 pub const OPH_ADD_BYTE: u8 = 0x53;
 pub const OPH_ADD_XREF_WORD: u8 = 0x55;

@@ -1191,9 +1191,9 @@ fn opaque_write_size(code: u16) -> u8 {
         opcode::OPH_ABS_WORD
         | opcode::OPH_ADD_WORD
         | opcode::OPH_WRT_STK_BYTE
-        | 0x41
+        | opcode::OPH_ABS_WORD_ALT
         | opcode::OPH_XREF_WORD
-        | 0x51
+        | opcode::OPH_ADD_WORD_ALT
         | opcode::OPH_ADD_XREF_WORD
         | opcode::OPH_DISP_WORD
         | opcode::OPH_DISP_WORD_ALIAS
@@ -1450,7 +1450,7 @@ fn materialize_opaque(
         | opcode::OPH_DISP_BYTE => Some(vec![i32_low_u8(value)]),
         0x41
         | opcode::OPH_XREF_WORD
-        | 0x51
+        | opcode::OPH_ADD_WORD_ALT
         | opcode::OPH_ADD_XREF_WORD
         | opcode::OPH_DISP_WORD
         | opcode::OPH_DISP_WORD_ALIAS => Some(i32_low_u16(value).to_be_bytes().to_vec()),
@@ -1506,7 +1506,7 @@ fn resolve_opaque_value(
     if matches!(
         hi,
         opcode::OPH_ADD_WORD
-            | 0x51
+            | opcode::OPH_ADD_WORD_ALT
             | opcode::OPH_ADD_LONG
             | opcode::OPH_ADD_BYTE
             | opcode::OPH_ADD_XREF_WORD
