@@ -255,6 +255,7 @@
   - `validate_unsupported_expression_commands` のグローバルシンボル収集を `collect_global_symbols` に切り出し、責務を明確化。
   - `linker.rs` の `parse_ar_members` で member header 解析を `parse_ar_member_header` (`ArMemberHeader`) に分離し、特殊メンバー分岐とヘッダ解析責務を分離。
   - `einfo_section_delta` の totals/placement 計算を `SectionTotals` / `SectionPlacement` に分離し、式展開の意図を明確化。
+  - `validate_unsupported_expression_commands` から 1 オブジェクト分の検証を `collect_object_expression_diagnostics` に抽出し、ループ本体の責務を集約側に限定。
 
 検証:
 - `cargo test -q --manifest-path Cargo.toml`: pass

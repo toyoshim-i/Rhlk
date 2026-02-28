@@ -1913,37 +1913,51 @@ fn validate_unsupported_expression_commands(
 
     let mut diagnostics = Vec::<String>::new();
     for (obj_idx, (obj, summary)) in objects.iter().zip(summaries.iter()).enumerate() {
-        let obj_name = input_paths
-            .get(obj_idx)
-            .and_then(|p| std::path::Path::new(p).file_name())
-            .and_then(|s| s.to_str())
-            .map_or_else(|| format!("obj{obj_idx}.o"), std::borrow::ToOwned::to_owned);
-        let mut usage = CtorDtorUsage::default();
-        walk_commands(obj, |cmd, current, local, calc_stack| match cmd {
-            Command::Header { section, size, .. } => usage.set_header_size(*section, *size),
-            Command::Opaque { code, .. } => {
-                usage.apply_opaque_code(*code);
-                let messages = expr::classify_expression_errors(
-                    *code,
-                    cmd,
-                    summary,
-                    &global_symbols,
-                    current,
-                    calc_stack,
-                );
-                for msg in messages {
-                    push_expr_diagnostic(&mut diagnostics, msg, &obj_name, local, current);
-                }
-            }
-            _ => {}
-        });
-        usage.push_mode_diagnostics(&mut diagnostics, &obj_name, g2lk_mode);
-        usage.push_header_size_diagnostics(&mut diagnostics, &obj_name);
+        diagnostics.extend(collect_object_expression_diagnostics(
+            obj_idx,
+            obj,
+            summary,
+            input_paths,
+            &global_symbols,
+            g2lk_mode,
+        ));
     }
     if diagnostics.is_empty() {
         return Ok(());
     }
     bail!("{}", diagnostics.join("\n"));
+}
+
+fn collect_object_expression_diagnostics(
+    obj_idx: usize,
+    obj: &ObjectFile,
+    summary: &ObjectSummary,
+    input_paths: &[String],
+    global_symbols: &HashMap<Vec<u8>, Symbol>,
+    g2lk_mode: bool,
+) -> Vec<String> {
+    let obj_name = input_paths
+        .get(obj_idx)
+        .and_then(|p| std::path::Path::new(p).file_name())
+        .and_then(|s| s.to_str())
+        .map_or_else(|| format!("obj{obj_idx}.o"), std::borrow::ToOwned::to_owned);
+    let mut diagnostics = Vec::<String>::new();
+    let mut usage = CtorDtorUsage::default();
+    walk_commands(obj, |cmd, current, local, calc_stack| match cmd {
+        Command::Header { section, size, .. } => usage.set_header_size(*section, *size),
+        Command::Opaque { code, .. } => {
+            usage.apply_opaque_code(*code);
+            let messages =
+                expr::classify_expression_errors(*code, cmd, summary, global_symbols, current, calc_stack);
+            for msg in messages {
+                push_expr_diagnostic(&mut diagnostics, msg, &obj_name, local, current);
+            }
+        }
+        _ => {}
+    });
+    usage.push_mode_diagnostics(&mut diagnostics, &obj_name, g2lk_mode);
+    usage.push_header_size_diagnostics(&mut diagnostics, &obj_name);
+    diagnostics
 }
 
 fn collect_global_symbols(summaries: &[ObjectSummary]) -> HashMap<Vec<u8>, Symbol> {
