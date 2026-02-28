@@ -101,36 +101,36 @@ pub(super) fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'stat
             errors
         }
         0x0a | 0x0b => {
-            let Ok((lhs, rhs)) = pop_binary(calc_stack, STACK_UNDERFLOW) else {
+            let Ok((top, next)) = pop_binary(calc_stack, STACK_UNDERFLOW) else {
                 return vec![STACK_UNDERFLOW];
             };
-            let (result, errors) = evaluate_a0_div_mod(lo, lhs, rhs);
+            let (result, errors) = evaluate_a0_div_mod(lo, top, next);
             if let Some(result) = result {
                 calc_stack.push(result);
             }
             errors
         }
         0x0f => {
-            let Ok((lhs, rhs)) = pop_binary(calc_stack, STACK_UNDERFLOW) else {
+            let Ok((top, next)) = pop_binary(calc_stack, STACK_UNDERFLOW) else {
                 return vec![STACK_UNDERFLOW];
             };
-            let (result, errors) = evaluate_a0_sub(lhs, rhs);
+            let (result, errors) = evaluate_a0_sub(top, next);
             calc_stack.push(result);
             errors
         }
         0x10 => {
-            let Ok((lhs, rhs)) = pop_binary(calc_stack, STACK_UNDERFLOW) else {
+            let Ok((top, next)) = pop_binary(calc_stack, STACK_UNDERFLOW) else {
                 return vec![STACK_UNDERFLOW];
             };
-            let (result, errors) = evaluate_a0_add(lhs, rhs);
+            let (result, errors) = evaluate_a0_add(top, next);
             calc_stack.push(result);
             errors
         }
         0x09 | 0x0c | 0x0d | 0x0e | 0x11..=0x1d => {
-            let Ok((lhs, rhs)) = pop_binary(calc_stack, STACK_UNDERFLOW) else {
+            let Ok((top, next)) = pop_binary(calc_stack, STACK_UNDERFLOW) else {
                 return vec![STACK_UNDERFLOW];
             };
-            let (result, errors) = evaluate_a0_binary(lo, lhs, rhs);
+            let (result, errors) = evaluate_a0_binary(lo, top, next);
             if let Some(result) = result {
                 calc_stack.push(result);
             }
@@ -148,14 +148,16 @@ fn pop_binary(
     calc_stack: &mut Vec<ExprEntry>,
     underflow_message: &'static str,
 ) -> Result<(ExprEntry, ExprEntry), &'static str> {
-    let Some(lhs) = calc_stack.pop() else {
+    // Arithmetic opcodes consume stack as: next (left operand), then top (right operand).
+    // Return order is (top, next) to preserve this relationship explicitly at call sites.
+    let Some(top) = calc_stack.pop() else {
         return Err(underflow_message);
     };
-    let Some(rhs) = calc_stack.pop() else {
-        calc_stack.push(lhs);
+    let Some(next) = calc_stack.pop() else {
+        calc_stack.push(top);
         return Err(underflow_message);
     };
-    Ok((lhs, rhs))
+    Ok((top, next))
 }
 
 fn evaluate_a0_unary(lo: u8, mut entry: ExprEntry) -> (ExprEntry, Vec<&'static str>) {
@@ -183,12 +185,16 @@ fn evaluate_a0_unary(lo: u8, mut entry: ExprEntry) -> (ExprEntry, Vec<&'static s
     (entry, Vec::new())
 }
 
-fn evaluate_a0_div_mod(lo: u8, lhs: ExprEntry, rhs: ExprEntry) -> (Option<ExprEntry>, Vec<&'static str>) {
-    let (res, errors) = eval_chk_calcexp2(lhs, rhs);
+fn evaluate_a0_div_mod(
+    lo: u8,
+    top: ExprEntry,
+    next: ExprEntry,
+) -> (Option<ExprEntry>, Vec<&'static str>) {
+    let (res, errors) = eval_chk_calcexp2(top, next);
     let Some(mut result) = res else {
         return (None, errors);
     };
-    if result.stat >= 0 && lhs.value == 0 {
+    if result.stat >= 0 && top.value == 0 {
         result.stat = -1;
         let mut out = errors;
         out.push("ゼロ除算");
@@ -196,47 +202,47 @@ fn evaluate_a0_div_mod(lo: u8, lhs: ExprEntry, rhs: ExprEntry) -> (Option<ExprEn
     }
     if result.stat == 0 {
         if lo == 0x0a {
-            result.value = rhs.value.wrapping_div(lhs.value);
+            result.value = next.value.wrapping_div(top.value);
         } else {
             // HLK's divs_d0d1 leaves abs(remainder).
-            result.value = rhs.value.wrapping_rem(lhs.value).abs();
+            result.value = next.value.wrapping_rem(top.value).abs();
         }
     }
     (Some(result), errors)
 }
 
-fn evaluate_a0_sub(lhs: ExprEntry, rhs: ExprEntry) -> (ExprEntry, Vec<&'static str>) {
+fn evaluate_a0_sub(top: ExprEntry, next: ExprEntry) -> (ExprEntry, Vec<&'static str>) {
     let mut errors = Vec::new();
     let mut out = ExprEntry {
         stat: -1,
-        value: rhs.value.wrapping_sub(lhs.value),
+        value: next.value.wrapping_sub(top.value),
     };
-    if lhs.stat == 0 {
-        out.stat = rhs.stat ^ lhs.stat;
-    } else if lhs.stat < 0 || rhs.stat < 0 {
+    if top.stat == 0 {
+        out.stat = next.stat ^ top.stat;
+    } else if top.stat < 0 || next.stat < 0 {
         out.stat = -1;
-    } else if lhs.stat != rhs.stat {
+    } else if top.stat != next.stat {
         errors.push("不正な式");
     } else {
-        out.stat = rhs.stat ^ lhs.stat;
+        out.stat = next.stat ^ top.stat;
     }
     (out, errors)
 }
 
-fn evaluate_a0_add(lhs: ExprEntry, rhs: ExprEntry) -> (ExprEntry, Vec<&'static str>) {
+fn evaluate_a0_add(top: ExprEntry, next: ExprEntry) -> (ExprEntry, Vec<&'static str>) {
     let mut errors = Vec::new();
     let mut out = ExprEntry {
         stat: -1,
-        value: rhs.value.wrapping_add(lhs.value),
+        value: next.value.wrapping_add(top.value),
     };
-    if lhs.stat == 0 {
-        out.stat = rhs.stat ^ lhs.stat;
-    } else if lhs.stat < 0 {
+    if top.stat == 0 {
+        out.stat = next.stat ^ top.stat;
+    } else if top.stat < 0 {
         out.stat = -1;
-    } else if rhs.stat == 0 {
-        out.stat = rhs.stat ^ lhs.stat;
+    } else if next.stat == 0 {
+        out.stat = next.stat ^ top.stat;
     } else {
-        if rhs.stat >= 0 {
+        if next.stat >= 0 {
             errors.push("不正な式");
         }
         out.stat = -1;
@@ -244,13 +250,17 @@ fn evaluate_a0_add(lhs: ExprEntry, rhs: ExprEntry) -> (ExprEntry, Vec<&'static s
     (out, errors)
 }
 
-fn evaluate_a0_binary(lo: u8, lhs: ExprEntry, rhs: ExprEntry) -> (Option<ExprEntry>, Vec<&'static str>) {
-    let (res, errors) = eval_chk_calcexp2(lhs, rhs);
+fn evaluate_a0_binary(
+    lo: u8,
+    top: ExprEntry,
+    next: ExprEntry,
+) -> (Option<ExprEntry>, Vec<&'static str>) {
+    let (res, errors) = eval_chk_calcexp2(top, next);
     let Some(mut result) = res else {
         return (None, errors);
     };
     if result.stat == 0 {
-        result.value = eval_a0_const_binop(lo, rhs.value, lhs.value);
+        result.value = eval_a0_const_binop(lo, next.value, top.value);
     }
     (Some(result), errors)
 }

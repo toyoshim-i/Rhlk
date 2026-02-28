@@ -359,21 +359,22 @@ fn build_scd_passthrough(
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
 ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    const SCD_HEADER_SIZE: usize = 12;
     let xdefs = build_scd_xdef_map(summaries);
-    let mut line = Vec::new();
-    let mut info = Vec::new();
-    let mut name = Vec::new();
+    let mut line_table = Vec::new();
+    let mut info_table = Vec::new();
+    let mut name_table = Vec::new();
     let mut sinfo_pos_entries = 0u32;
 
     for (idx, obj) in objects.iter().enumerate() {
         let tail = &obj.scd_tail;
-        if tail.len() < 12 {
+        if tail.len() < SCD_HEADER_SIZE {
             continue;
         }
         let linfo_size = u32::from_be_bytes([tail[0], tail[1], tail[2], tail[3]]) as usize;
         let sinfo_plus_einfo_size = u32::from_be_bytes([tail[4], tail[5], tail[6], tail[7]]) as usize;
         let ninfo_size = u32::from_be_bytes([tail[8], tail[9], tail[10], tail[11]]) as usize;
-        let total = 12usize
+        let total = SCD_HEADER_SIZE
             .saturating_add(linfo_size)
             .saturating_add(sinfo_plus_einfo_size)
             .saturating_add(ninfo_size);
@@ -381,7 +382,7 @@ fn build_scd_passthrough(
             continue;
         }
 
-        let mut p = 12usize;
+        let mut tail_offset = SCD_HEADER_SIZE;
         // HLK make_scdinfo compatible line fixup:
         // - location!=0 : + text_pos
         // - location==0 : + cumulative sinfo_pos(entries)
@@ -390,13 +391,14 @@ fn build_scd_passthrough(
             .get(&SectionKind::Text)
             .copied()
             .unwrap_or(0);
-        let linfo = &tail[p..p + linfo_size];
-        line.extend_from_slice(&rebase_scd_line_table(linfo, text_pos, sinfo_pos_entries));
-        p += linfo_size;
+        let linfo = &tail[tail_offset..tail_offset + linfo_size];
+        line_table.extend_from_slice(&rebase_scd_line_table(linfo, text_pos, sinfo_pos_entries));
+        tail_offset += linfo_size;
         let sinfo_count = extract_sinfo_count(tail, linfo_size);
-        let sinfo_plus_einfo = &tail[p..p + sinfo_plus_einfo_size];
-        let ninfo = &tail[p + sinfo_plus_einfo_size..p + sinfo_plus_einfo_size + ninfo_size];
-        info.extend_from_slice(&rebase_scd_info_table(
+        let sinfo_plus_einfo = &tail[tail_offset..tail_offset + sinfo_plus_einfo_size];
+        let ninfo =
+            &tail[tail_offset + sinfo_plus_einfo_size..tail_offset + sinfo_plus_einfo_size + ninfo_size];
+        info_table.extend_from_slice(&rebase_scd_info_table(
             sinfo_plus_einfo,
             ninfo,
             sinfo_count,
@@ -405,32 +407,38 @@ fn build_scd_passthrough(
             layout,
             &xdefs,
         )?);
-        p += sinfo_plus_einfo_size;
-        name.extend_from_slice(&tail[p..p + ninfo_size]);
+        tail_offset += sinfo_plus_einfo_size;
+        name_table.extend_from_slice(&tail[tail_offset..tail_offset + ninfo_size]);
 
         sinfo_pos_entries = sinfo_pos_entries.saturating_add(sinfo_count);
     }
 
-    Ok((line, info, name))
+    Ok((line_table, info_table, name_table))
 }
 
 fn rebase_scd_line_table(input: &[u8], text_pos: u32, sinfo_pos_entries: u32) -> Vec<u8> {
-    if !input.len().is_multiple_of(6) {
+    const LINE_ENTRY_SIZE: usize = 6;
+    if !input.len().is_multiple_of(LINE_ENTRY_SIZE) {
         return input.to_vec();
     }
     let mut out = Vec::with_capacity(input.len());
-    let mut i = 0usize;
-    while i + 6 <= input.len() {
-        let mut loc = u32::from_be_bytes([input[i], input[i + 1], input[i + 2], input[i + 3]]);
+    let mut entry_offset = 0usize;
+    while entry_offset + LINE_ENTRY_SIZE <= input.len() {
+        let mut loc = u32::from_be_bytes([
+            input[entry_offset],
+            input[entry_offset + 1],
+            input[entry_offset + 2],
+            input[entry_offset + 3],
+        ]);
         if loc != 0 {
             loc = loc.saturating_add(text_pos);
         } else {
             loc = loc.saturating_add(sinfo_pos_entries);
         }
         out.extend_from_slice(&loc.to_be_bytes());
-        out.push(input[i + 4]);
-        out.push(input[i + 5]);
-        i += 6;
+        out.push(input[entry_offset + 4]);
+        out.push(input[entry_offset + 5]);
+        entry_offset += LINE_ENTRY_SIZE;
     }
     out
 }
@@ -452,42 +460,55 @@ fn rebase_scd_info_table(
     layout: &LayoutPlan,
     xdefs: &HashMap<Vec<u8>, ScdXdef>,
 ) -> Result<Vec<u8>> {
+    const SCD_INFO_ENTRY_SIZE: usize = 18;
     let mut out = input.to_vec();
-    let sinfo_bytes = (sinfo_count as usize).saturating_mul(18).min(out.len());
-    let mut p = 0usize;
-    while p + 18 <= sinfo_bytes {
-        let sect = u16::from_be_bytes([out[p + 12], out[p + 13]]);
+    let sinfo_bytes = (sinfo_count as usize)
+        .saturating_mul(SCD_INFO_ENTRY_SIZE)
+        .min(out.len());
+    let mut sinfo_offset = 0usize;
+    while sinfo_offset + SCD_INFO_ENTRY_SIZE <= sinfo_bytes {
+        let sect = u16::from_be_bytes([out[sinfo_offset + 12], out[sinfo_offset + 13]]);
         let delta = sinfo_section_delta(sect, placement, layout)?;
         if let Some(delta) = delta {
             if delta != 0 {
-                let mut val = u32::from_be_bytes([out[p + 8], out[p + 9], out[p + 10], out[p + 11]]);
+                let mut val = u32::from_be_bytes([
+                    out[sinfo_offset + 8],
+                    out[sinfo_offset + 9],
+                    out[sinfo_offset + 10],
+                    out[sinfo_offset + 11],
+                ]);
                 val = val.wrapping_add(i64_low_u32(delta));
-                out[p + 8..p + 12].copy_from_slice(&val.to_be_bytes());
+                out[sinfo_offset + 8..sinfo_offset + 12].copy_from_slice(&val.to_be_bytes());
             }
         }
-        p += 18;
+        sinfo_offset += SCD_INFO_ENTRY_SIZE;
     }
 
     // Minimal einfo fixup:
     // if entry starts with d6==0, the next long is sinfo index and must be rebased.
-    let mut q = sinfo_bytes;
-    while q + 18 <= out.len() {
-        let d6 = u32::from_be_bytes([out[q], out[q + 1], out[q + 2], out[q + 3]]);
-        let sect = u16::from_be_bytes([out[q + 8], out[q + 9]]);
+    let mut einfo_offset = sinfo_bytes;
+    while einfo_offset + SCD_INFO_ENTRY_SIZE <= out.len() {
+        let d6 = u32::from_be_bytes([
+            out[einfo_offset],
+            out[einfo_offset + 1],
+            out[einfo_offset + 2],
+            out[einfo_offset + 3],
+        ]);
+        let sect = u16::from_be_bytes([out[einfo_offset + 8], out[einfo_offset + 9]]);
         if d6 == 0 {
             let mut ref_idx =
-                u32::from_be_bytes([out[q + 4], out[q + 5], out[q + 6], out[q + 7]]);
+                u32::from_be_bytes([out[einfo_offset + 4], out[einfo_offset + 5], out[einfo_offset + 6], out[einfo_offset + 7]]);
             if ref_idx != 0 {
                 ref_idx = ref_idx.saturating_add(sinfo_pos_entries);
-                out[q + 4..q + 8].copy_from_slice(&ref_idx.to_be_bytes());
+                out[einfo_offset + 4..einfo_offset + 8].copy_from_slice(&ref_idx.to_be_bytes());
             }
         } else {
             if matches!(sect, 0x0004 | 0x0007 | 0x000a) {
                 bail!("unsupported SCD einfo section for d6!=0: {sect:#06x}");
             }
             if matches!(sect, 0x00fc..=0x00fe | 0xfffc..=0xfffe) {
-                let name = decode_scd_entry_name(&out[q..q + 18], ninfo)
-                    .with_context(|| format!("invalid SCD einfo name at offset {q}"))?;
+                let name = decode_scd_entry_name(&out[einfo_offset..einfo_offset + SCD_INFO_ENTRY_SIZE], ninfo)
+                    .with_context(|| format!("invalid SCD einfo name at offset {einfo_offset}"))?;
                 let Some(xdef) = xdefs.get(&name) else {
                     bail!(
                         "unresolved SCD einfo common-reference for d6!=0: {}",
@@ -503,21 +524,25 @@ fn rebase_scd_info_table(
                         xdef.section
                     ),
                 };
-                out[q + 4..q + 8].copy_from_slice(&resolved_off.to_be_bytes());
-                out[q + 8..q + 10].copy_from_slice(&resolved_sect.to_be_bytes());
-                q += 18;
+                out[einfo_offset + 4..einfo_offset + 8].copy_from_slice(&resolved_off.to_be_bytes());
+                out[einfo_offset + 8..einfo_offset + 10].copy_from_slice(&resolved_sect.to_be_bytes());
+                einfo_offset += SCD_INFO_ENTRY_SIZE;
                 continue;
             }
             if let Some(delta) = einfo_section_delta(sect, placement, layout) {
                 if delta != 0 {
-                    let off =
-                        u32::from_be_bytes([out[q + 4], out[q + 5], out[q + 6], out[q + 7]]);
+                    let off = u32::from_be_bytes([
+                        out[einfo_offset + 4],
+                        out[einfo_offset + 5],
+                        out[einfo_offset + 6],
+                        out[einfo_offset + 7],
+                    ]);
                     let adj = off.wrapping_add(i64_low_u32(delta));
-                    out[q + 4..q + 8].copy_from_slice(&adj.to_be_bytes());
+                    out[einfo_offset + 4..einfo_offset + 8].copy_from_slice(&adj.to_be_bytes());
                 }
             }
         }
-        q += 18;
+        einfo_offset += SCD_INFO_ENTRY_SIZE;
     }
     Ok(out)
 }
