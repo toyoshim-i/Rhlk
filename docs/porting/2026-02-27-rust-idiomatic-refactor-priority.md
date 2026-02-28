@@ -230,6 +230,8 @@
   - archive member 選択結果の適用を `HashSet<usize>` から `Vec<bool>` マスクへ変更し、中間集合構築と `contains` 探索コストを削減。
   - `linker` テスト経路の入力ロードも `PathBuf` ベース (`load_objects_with_requests_paths`) に統一し、`String -> PathBuf` 再変換を削減。
   - `select_archive_members` 内の選択済み管理を `HashSet<usize>` から `Vec<bool>` に変更し、ループ内 membership 判定を O(1) 配列参照へ単純化。
+  - 入力キュー初期化を `pending.extend(initial_inputs.iter().cloned())` に整理し、反復 push の定型コードを削減。
+  - `resolve_output_path` で不要な `PathBuf` 一時変数を削除し、`inputs.first()` 参照から直接 stem/parent を導出する形へ簡素化。
 
 検証:
 - `cargo test -q --manifest-path Rhlk/Cargo.toml`: pass

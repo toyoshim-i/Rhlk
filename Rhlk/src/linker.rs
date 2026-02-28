@@ -423,9 +423,8 @@ fn resolve_output_path(args: &Args, inputs: &[PathBuf]) -> PathBuf {
     let base = if let Some(out) = args.output.as_ref() {
         out.clone()
     } else if let Some(first) = inputs.first() {
-        let p = first.clone();
-        if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-            if let Some(parent) = p.parent() {
+        if let Some(stem) = first.file_stem().and_then(|s| s.to_str()) {
+            if let Some(parent) = first.parent() {
                 if parent.as_os_str().is_empty() {
                     PathBuf::from(stem)
                 } else {
@@ -435,7 +434,7 @@ fn resolve_output_path(args: &Args, inputs: &[PathBuf]) -> PathBuf {
                 PathBuf::from(stem)
             }
         } else {
-            p
+            first.clone()
         }
     } else {
         PathBuf::from("a")
@@ -529,9 +528,7 @@ fn load_objects_with_requests_paths(
     let mut loaded = HashSet::<PathBuf>::new();
     let mut archive_visits = HashMap::<PathBuf, usize>::new();
 
-    for input in initial_inputs {
-        pending.push_back(input.clone());
-    }
+    pending.extend(initial_inputs.iter().cloned());
 
     while let Some(path) = pending.pop_front() {
         let abs = absolutize_path(&path)?;
