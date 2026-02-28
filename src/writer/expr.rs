@@ -358,12 +358,7 @@ fn evaluate_direct_byte(
         Err(()) => return vec!["アドレス属性シンボルの値をバイトサイズで出力"],
         Ok(Some(label_no)) => {
             if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
-                if section_stat(section) != 0 {
-                    return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
-                }
-                if !fits_byte(value) {
-                    return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
-                }
+                return validate_direct_byte_xref(section, value);
             }
             return Vec::new();
         }
@@ -372,10 +367,7 @@ fn evaluate_direct_byte(
     let Some(value) = read_i32_be(payload) else {
         return Vec::new();
     };
-    if !fits_byte(value) {
-        return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
-    }
-    Vec::new()
+    validate_direct_byte_const(value)
 }
 
 fn evaluate_direct_byte_with_offset(
@@ -389,13 +381,7 @@ fn evaluate_direct_byte_with_offset(
         Ok(Some(label_no)) => {
             let offset = read_i32_be(&payload[2..]).unwrap_or(0);
             if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
-                let total = value.wrapping_add(offset);
-                if section_stat(section) != 0 {
-                    return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
-                }
-                if !fits_byte(total) {
-                    return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
-                }
+                return validate_direct_byte_xref(section, value.wrapping_add(offset));
             }
             return Vec::new();
         }
@@ -405,10 +391,7 @@ fn evaluate_direct_byte_with_offset(
         return Vec::new();
     };
     let offset = read_i32_be(&payload[4..]).unwrap_or(0);
-    if !fits_byte(value.wrapping_add(offset)) {
-        return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
-    }
-    Vec::new()
+    validate_direct_byte_const(value.wrapping_add(offset))
 }
 
 fn evaluate_direct_word(
@@ -422,23 +405,7 @@ fn evaluate_direct_word(
         Err(()) => return vec!["アドレス属性シンボルの値をワードサイズで出力"],
         Ok(Some(label_no)) => {
             if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
-                let stat = section_stat(section);
-                if stat == 0 {
-                    if !fits_word(value) {
-                        return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
-                    }
-                    return Vec::new();
-                }
-                if stat == 1 {
-                    return vec!["アドレス属性シンボルの値をワードサイズで出力"];
-                }
-                if is_base_section(current) {
-                    if !fits_word2(value) {
-                        return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
-                    }
-                    return Vec::new();
-                }
-                return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+                return validate_direct_word_xref(section, value, current);
             }
             return Vec::new();
         }
@@ -447,10 +414,7 @@ fn evaluate_direct_word(
     let Some(value) = read_i32_be(payload) else {
         return Vec::new();
     };
-    if !fits_word(value) {
-        return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
-    }
-    Vec::new()
+    validate_direct_word_const(value)
 }
 
 fn evaluate_direct_word_with_offset(
@@ -465,24 +429,7 @@ fn evaluate_direct_word_with_offset(
         Ok(Some(label_no)) => {
             let offset = read_i32_be(&payload[2..]).unwrap_or(0);
             if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
-                let total = value.wrapping_add(offset);
-                let stat = section_stat(section);
-                if stat == 0 {
-                    if !fits_word(total) {
-                        return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
-                    }
-                    return Vec::new();
-                }
-                if stat == 1 {
-                    return vec!["アドレス属性シンボルの値をワードサイズで出力"];
-                }
-                if is_base_section(current) {
-                    if !fits_word2(total) {
-                        return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
-                    }
-                    return Vec::new();
-                }
-                return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+                return validate_direct_word_xref(section, value.wrapping_add(offset), current);
             }
             return Vec::new();
         }
@@ -492,10 +439,7 @@ fn evaluate_direct_word_with_offset(
         return Vec::new();
     };
     let offset = read_i32_be(&payload[4..]).unwrap_or(0);
-    if !fits_word(value.wrapping_add(offset)) {
-        return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
-    }
-    Vec::new()
+    validate_direct_word_const(value.wrapping_add(offset))
 }
 
 fn direct_xref_label_no(lo: u8, payload: &[u8]) -> Result<Option<u16>, ()> {
@@ -506,6 +450,44 @@ fn direct_xref_label_no(lo: u8, payload: &[u8]) -> Result<Option<u16>, ()> {
         return Err(());
     }
     Ok(read_u16_be(payload))
+}
+
+fn validate_direct_byte_const(value: i32) -> Vec<&'static str> {
+    if !fits_byte(value) {
+        return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
+    }
+    Vec::new()
+}
+
+fn validate_direct_byte_xref(section: SectionKind, value: i32) -> Vec<&'static str> {
+    if section_stat(section) != 0 {
+        return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
+    }
+    validate_direct_byte_const(value)
+}
+
+fn validate_direct_word_const(value: i32) -> Vec<&'static str> {
+    if !fits_word(value) {
+        return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
+    }
+    Vec::new()
+}
+
+fn validate_direct_word_xref(section: SectionKind, value: i32, current: SectionKind) -> Vec<&'static str> {
+    let stat = section_stat(section);
+    if stat == 0 {
+        return validate_direct_word_const(value);
+    }
+    if stat == 1 {
+        return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+    }
+    if is_base_section(current) {
+        if !fits_word2(value) {
+            return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
+        }
+        return Vec::new();
+    }
+    vec!["アドレス属性シンボルの値をワードサイズで出力"]
 }
 
 fn resolve_xref(
