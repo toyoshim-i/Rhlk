@@ -219,6 +219,7 @@
   - `compute_g2lk_synthetic_symbols` の opcode 集計も `walk_commands` 経由に統一。
   - `writer/expr.rs` の direct byte/word 系4関数に共通する `xref/common` オペランド判定を `direct_xref_label_no` helper に集約。
   - direct byte/word 系の値検証（定数/xref）を `validate_direct_*` helper に集約し、重複したエラーメッセージ分岐を整理。
+- `select_archive_members` の `defs/unresolved` 更新ループを helper (`add_defined_symbols`, `extend_unresolved`) 化し、同一処理の重複を削減。
 - P1-2: 着手（第一段）
   - `linker.rs` の `resolve_map_output` を `Option<&String>` から `Option<&str>` へ移行し、呼び出し側を `as_deref()` ベースに更新。
   - 文字列所有を要求しない API 形に寄せ、`Path/PathBuf` 中心化の前段整理を実施。

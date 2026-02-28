@@ -786,16 +786,10 @@ fn select_archive_members(
     let mut defs = HashSet::<Vec<u8>>::new();
     let mut unresolved = HashSet::<Vec<u8>>::new();
     for sum in loaded_summaries {
-        for sym in &sum.symbols {
-            defs.insert(sym.name.clone());
-        }
+        add_defined_symbols(&mut defs, &sum.symbols);
     }
     for sum in loaded_summaries {
-        for xr in &sum.xrefs {
-            if !defs.contains(&xr.name) {
-                unresolved.insert(xr.name.clone());
-            }
-        }
+        extend_unresolved(&mut unresolved, &defs, &sum.xrefs);
     }
     if unresolved.is_empty() {
         return selected;
@@ -814,14 +808,8 @@ fn select_archive_members(
             selected.push(idx);
             selected_mask[idx] = true;
             changed = true;
-            for sym in &sum.symbols {
-                defs.insert(sym.name.clone());
-            }
-            for xr in &sum.xrefs {
-                if !defs.contains(&xr.name) {
-                    unresolved.insert(xr.name.clone());
-                }
-            }
+            add_defined_symbols(&mut defs, &sum.symbols);
+            extend_unresolved(&mut unresolved, &defs, &sum.xrefs);
             unresolved.retain(|name| !defs.contains(name));
         }
         if !changed {
@@ -829,6 +817,23 @@ fn select_archive_members(
         }
     }
     selected
+}
+
+fn add_defined_symbols(defs: &mut HashSet<Vec<u8>>, symbols: &[crate::resolver::Symbol]) {
+    defs.extend(symbols.iter().map(|sym| sym.name.clone()));
+}
+
+fn extend_unresolved(
+    unresolved: &mut HashSet<Vec<u8>>,
+    defs: &HashSet<Vec<u8>>,
+    xrefs: &[crate::resolver::Symbol],
+) {
+    unresolved.extend(
+        xrefs
+            .iter()
+            .filter(|xr| !defs.contains(&xr.name))
+            .map(|xr| xr.name.clone()),
+    );
 }
 
 fn trim_member_name(name: &str) -> String {
