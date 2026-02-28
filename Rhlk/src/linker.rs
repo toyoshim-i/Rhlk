@@ -780,7 +780,7 @@ fn select_archive_members(
     members: &[(String, crate::format::obj::ObjectFile, ObjectSummary)],
 ) -> Vec<usize> {
     let mut selected = Vec::<usize>::new();
-    let mut selected_set = HashSet::<usize>::new();
+    let mut selected_mask = vec![false; members.len()];
     let mut defs = HashSet::<Vec<u8>>::new();
     let mut unresolved = HashSet::<Vec<u8>>::new();
     for sum in loaded_summaries {
@@ -802,7 +802,7 @@ fn select_archive_members(
     loop {
         let mut changed = false;
         for (idx, (_, _, sum)) in members.iter().enumerate() {
-            if selected_set.contains(&idx) {
+            if selected_mask[idx] {
                 continue;
             }
             let provides_needed = sum.symbols.iter().any(|s| unresolved.contains(&s.name));
@@ -810,7 +810,7 @@ fn select_archive_members(
                 continue;
             }
             selected.push(idx);
-            selected_set.insert(idx);
+            selected_mask[idx] = true;
             changed = true;
             for sym in &sum.symbols {
                 defs.insert(sym.name.clone());
