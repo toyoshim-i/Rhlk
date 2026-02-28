@@ -1024,8 +1024,8 @@ mod tests {
         // 0000(end)
         fs::write(&sub, [0x00, 0x00]).expect("write sub");
 
-        let inputs = vec![main.clone()];
-        let (_, _, names) = load_objects_with_requests_paths(&inputs, false).expect("load");
+        let (_, _, names) =
+            load_objects_with_requests_paths(std::slice::from_ref(&main), false).expect("load");
         assert_eq!(names.len(), 2);
         assert_eq!(names[0], main.to_string_lossy());
         assert!(names.iter().any(|v| v.ends_with("sub.o")));
@@ -1047,8 +1047,8 @@ mod tests {
         let main = dir.join("main.o");
         fs::write(&main, [0xe0, 0x01, b'n', b'o', b'n', b'e', b'.', b'o', 0x00, 0x00]).expect("write main");
 
-        let inputs = vec![main.clone()];
-        let err = load_objects_with_requests_paths(&inputs, false).expect_err("must fail");
+        let err = load_objects_with_requests_paths(std::slice::from_ref(&main), false)
+            .expect_err("must fail");
         assert!(err.to_string().contains("ファイルがありません: none.o"));
 
         let _ = fs::remove_file(main);
@@ -1071,8 +1071,8 @@ mod tests {
         fs::write(&main, [0xe0, 0x01, b's', b'u', b'b', 0x00, 0x00, 0x00]).expect("write main");
         fs::write(&sub, [0x00, 0x00]).expect("write sub");
 
-        let inputs = vec![main.clone()];
-        let (_, _, names) = load_objects_with_requests_paths(&inputs, false).expect("load");
+        let (_, _, names) =
+            load_objects_with_requests_paths(std::slice::from_ref(&main), false).expect("load");
         assert_eq!(names.len(), 2);
         assert!(names.iter().any(|v| v.ends_with("sub.o")));
 
@@ -1096,8 +1096,8 @@ mod tests {
         let ar = make_simple_ar(&[("foo.o", &obj_with_def("foo"))]);
         fs::write(&lib, ar).expect("write lib");
 
-        let inputs = vec![main.clone()];
-        let (_, sums, names) = load_objects_with_requests_paths(&inputs, false).expect("load");
+        let (_, sums, names) =
+            load_objects_with_requests_paths(std::slice::from_ref(&main), false).expect("load");
         validate_unresolved_symbols(&sums, &names).expect("resolved");
         assert!(names.iter().any(|v| v.ends_with("libx.a(foo.o)")));
 
@@ -1171,8 +1171,8 @@ mod tests {
 
         let prev = std::env::current_dir().expect("cwd");
         std::env::set_current_dir(&dir_cwd).expect("chdir");
-        let inputs = vec![main.clone()];
-        let (_, _, names) = load_objects_with_requests_paths(&inputs, false).expect("load");
+        let (_, _, names) =
+            load_objects_with_requests_paths(std::slice::from_ref(&main), false).expect("load");
         std::env::set_current_dir(prev).expect("restore cwd");
 
         assert_eq!(names.len(), 2);
@@ -1201,8 +1201,8 @@ mod tests {
         let ar = make_simple_ar(&[("foo.o", &obj_with_def("foo")), ("bar.o", &obj_with_def("bar"))]);
         fs::write(&lib, ar).expect("write lib");
 
-        let inputs = vec![main.clone()];
-        let (_, _, names) = load_objects_with_requests_paths(&inputs, false).expect("must load");
+        let (_, _, names) =
+            load_objects_with_requests_paths(std::slice::from_ref(&main), false).expect("must load");
         assert_eq!(names.len(), 2);
         assert!(names.iter().any(|v| v.ends_with("libx.a(foo.o)")));
         assert!(!names.iter().any(|v| v.ends_with("libx.a(bar.o)")));
