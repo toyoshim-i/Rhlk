@@ -535,7 +535,8 @@ fn load_objects_with_requests_paths(
 
     while let Some(path) = pending.pop_front() {
         let abs = absolutize_path(&path)?;
-        if is_archive_like(&path) {
+        let archive_like = is_archive_like(&path);
+        if archive_like {
             let cnt = archive_visits.entry(abs.clone()).or_insert(0);
             *cnt += 1;
             if *cnt > MAX_ARCHIVE_VISITS {
@@ -548,8 +549,11 @@ fn load_objects_with_requests_paths(
         }
         // Keep one-pass semantics for normal object files, but allow re-reading
         // archive inputs when they are explicitly listed multiple times.
-        if !is_archive_like(&path) && !loaded.insert(abs.clone()) {
-            continue;
+        if !archive_like {
+            if loaded.contains(&abs) {
+                continue;
+            }
+            loaded.insert(abs.clone());
         }
         let bytes = std::fs::read(&abs).map_err(|_| {
             let name = display_name(&path);
@@ -571,7 +575,7 @@ fn load_objects_with_requests_paths(
                     summary,
                 )?;
             }
-            Err(FormatError::UnsupportedCommand(_)) if is_archive_like(&path) && is_ar_archive(&bytes) => {
+            Err(FormatError::UnsupportedCommand(_)) if archive_like && is_ar_archive(&bytes) => {
                 let members = parse_ar_members(&bytes)?;
                 if members.is_empty() {
                     let name = display_name(&path);
