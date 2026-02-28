@@ -684,23 +684,22 @@ fn resolve_requested_path(base_dir: &Path, req_name: &str) -> Option<PathBuf> {
     let req = Path::new(req_name);
     let mut candidates = Vec::<PathBuf>::new();
     if req.is_absolute() {
-        candidates.push(req.to_path_buf());
-        if req.extension().is_none() {
-            for ext in ["o", "obj", "a", "lib"] {
-                candidates.push(req.with_extension(ext));
-            }
-        }
+        push_candidate_variants(&mut candidates, req);
     } else {
-        for base in [base_dir.join(req), PathBuf::from(req)] {
-            candidates.push(base.clone());
-            if base.extension().is_none() {
-                for ext in ["o", "obj", "a", "lib"] {
-                    candidates.push(base.with_extension(ext));
-                }
-            }
-        }
+        let base_relative = base_dir.join(req);
+        push_candidate_variants(&mut candidates, &base_relative);
+        push_candidate_variants(&mut candidates, req);
     }
     candidates.into_iter().find(|c| c.exists())
+}
+
+fn push_candidate_variants(candidates: &mut Vec<PathBuf>, base: &Path) {
+    candidates.push(base.to_path_buf());
+    if base.extension().is_none() {
+        for ext in ["o", "obj", "a", "lib"] {
+            candidates.push(base.with_extension(ext));
+        }
+    }
 }
 
 fn absolutize_path(path: &Path) -> anyhow::Result<PathBuf> {

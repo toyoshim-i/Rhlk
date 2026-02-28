@@ -568,6 +568,14 @@ struct ScdXdef {
     value: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CommonSymbolStats {
+    section: SectionKind,
+    max_size: u32,
+    first_seen_order: usize,
+    has_conflicting_section: bool,
+}
+
 fn decode_scd_entry_name(entry: &[u8], ninfo: &[u8]) -> Result<Vec<u8>> {
     if entry.len() < 8 {
         bail!("entry too short");
@@ -614,7 +622,8 @@ fn build_scd_xdef_map(summaries: &[ObjectSummary]) -> HashMap<Vec<u8>, ScdXdef> 
         }
     }
 
-    let mut common_size = HashMap::<Vec<u8>, (SectionKind, u32, usize, bool)>::new();
+    // Collect common/rcommon/rlcommon candidates and keep HLK-like first appearance order.
+    let mut common_candidates = HashMap::<Vec<u8>, CommonSymbolStats>::new();
     let mut order = 0usize;
     for summary in summaries {
         for sym in &summary.symbols {
@@ -625,52 +634,57 @@ fn build_scd_xdef_map(summaries: &[ObjectSummary]) -> HashMap<Vec<u8>, ScdXdef> 
                 continue;
             }
             let size = align_even(sym.value);
-            let e = common_size
+            let stats = common_candidates
                 .entry(sym.name.clone())
-                .or_insert((sym.section, size, order, false));
+                .or_insert(CommonSymbolStats {
+                    section: sym.section,
+                    max_size: size,
+                    first_seen_order: order,
+                    has_conflicting_section: false,
+                });
             order = order.saturating_add(1);
-            if e.0 != sym.section {
-                e.3 = true;
+            if stats.section != sym.section {
+                stats.has_conflicting_section = true;
                 continue;
             }
-            if size > e.1 {
-                e.1 = size;
+            if size > stats.max_size {
+                stats.max_size = size;
             }
         }
     }
 
-    let mut ordered = common_size.into_iter().collect::<Vec<_>>();
-    ordered.sort_by_key(|(_, (_, _, ord, _))| *ord);
-    let mut common_cur = 0u32;
-    let mut rcommon_cur = 0u32;
-    let mut rlcommon_cur = 0u32;
-    for (name, (section, size, _, conflicted)) in ordered {
-        if conflicted || non_common.contains(&name) || xdefs.contains_key(&name) {
+    let mut ordered_candidates = common_candidates.into_iter().collect::<Vec<_>>();
+    ordered_candidates.sort_by_key(|(_, stats)| stats.first_seen_order);
+    let mut common_cursor = 0u32;
+    let mut rcommon_cursor = 0u32;
+    let mut rlcommon_cursor = 0u32;
+    for (name, stats) in ordered_candidates {
+        if stats.has_conflicting_section || non_common.contains(&name) || xdefs.contains_key(&name) {
             continue;
         }
-        let off = match section {
+        let offset = match stats.section {
             SectionKind::Common => {
-                let v = common_cur;
-                common_cur = common_cur.saturating_add(size);
-                v
+                let current = common_cursor;
+                common_cursor = common_cursor.saturating_add(stats.max_size);
+                current
             }
             SectionKind::RCommon => {
-                let v = rcommon_cur;
-                rcommon_cur = rcommon_cur.saturating_add(size);
-                v
+                let current = rcommon_cursor;
+                rcommon_cursor = rcommon_cursor.saturating_add(stats.max_size);
+                current
             }
             SectionKind::RLCommon => {
-                let v = rlcommon_cur;
-                rlcommon_cur = rlcommon_cur.saturating_add(size);
-                v
+                let current = rlcommon_cursor;
+                rlcommon_cursor = rlcommon_cursor.saturating_add(stats.max_size);
+                current
             }
             _ => continue,
         };
         xdefs.insert(
             name,
             ScdXdef {
-                section,
-                value: off,
+                section: stats.section,
+                value: offset,
             },
         );
     }
@@ -1819,10 +1833,7 @@ fn validate_unsupported_expression_commands(
                     calc_stack,
                 );
                 for msg in messages {
-                    diagnostics.push(format!(
-                        "{msg} in {obj_name}\n at {local:08x} ({})",
-                        section_name(current)
-                    ));
+                    push_expr_diagnostic(&mut diagnostics, msg, &obj_name, local, current);
                 }
             }
             _ => {}
@@ -1860,6 +1871,19 @@ fn validate_unsupported_expression_commands(
         return Ok(());
     }
     bail!("{}", diagnostics.join("\n"));
+}
+
+fn push_expr_diagnostic(
+    diagnostics: &mut Vec<String>,
+    message: &str,
+    obj_name: &str,
+    local: u32,
+    current: SectionKind,
+) {
+    diagnostics.push(format!(
+        "{message} in {obj_name}\n at {local:08x} ({})",
+        section_name(current)
+    ));
 }
 
 
