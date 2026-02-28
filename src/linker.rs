@@ -563,17 +563,15 @@ fn load_objects_with_requests_paths(
             Ok(object) => {
                 let summary = resolve_object(&object);
                 let label = path.to_string_lossy().to_string();
-                add_loaded_object(
+                let mut state = LoadState {
                     verbose,
-                    &mut pending,
-                    abs.parent().unwrap_or(Path::new(".")),
-                    &mut objects,
-                    &mut summaries,
-                    &mut input_names,
-                    label,
-                    object,
-                    summary,
-                )?;
+                    pending: &mut pending,
+                    base_dir: abs.parent().unwrap_or(Path::new(".")),
+                    objects: &mut objects,
+                    summaries: &mut summaries,
+                    input_names: &mut input_names,
+                };
+                state.add_loaded_object(label, object, summary)?;
             }
             Err(FormatError::UnsupportedCommand(_)) if archive_like && is_ar_archive(&bytes) => {
                 let members = parse_ar_members(&bytes)?;
@@ -597,22 +595,20 @@ fn load_objects_with_requests_paths(
                         *slot = true;
                     }
                 }
+                let mut state = LoadState {
+                    verbose,
+                    pending: &mut pending,
+                    base_dir,
+                    objects: &mut objects,
+                    summaries: &mut summaries,
+                    input_names: &mut input_names,
+                };
                 for (idx, (member_name, object, summary)) in parsed_members.into_iter().enumerate() {
                     if !selected.get(idx).copied().unwrap_or(false) {
                         continue;
                     }
                     let label = format!("{}({})", path.to_string_lossy(), member_name);
-                    add_loaded_object(
-                        verbose,
-                        &mut pending,
-                        base_dir,
-                        &mut objects,
-                        &mut summaries,
-                        &mut input_names,
-                        label,
-                        object,
-                        summary,
-                    )?;
+                    state.add_loaded_object(label, object, summary)?;
                 }
             }
             Err(e) => {
@@ -625,35 +621,40 @@ fn load_objects_with_requests_paths(
     Ok((objects, summaries, input_names))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn add_loaded_object(
+struct LoadState<'a> {
     verbose: bool,
-    pending: &mut VecDeque<PathBuf>,
-    base_dir: &Path,
-    objects: &mut Vec<crate::format::obj::ObjectFile>,
-    summaries: &mut Vec<ObjectSummary>,
-    input_names: &mut Vec<String>,
-    label: String,
-    object: crate::format::obj::ObjectFile,
-    summary: ObjectSummary,
-) -> anyhow::Result<()> {
-    if verbose {
-        println!("parsed {}: {} commands", label, object.commands.len());
-        println!(
-            "  align={} sections: declared={} observed={} symbols={} xrefs={} requests={}",
-            summary.object_align,
-            summary.declared_section_sizes.len(),
-            summary.observed_section_usage.len(),
-            summary.symbols.len(),
-            summary.xrefs.len(),
-            summary.requests.len()
-        );
+    pending: &'a mut VecDeque<PathBuf>,
+    base_dir: &'a Path,
+    objects: &'a mut Vec<crate::format::obj::ObjectFile>,
+    summaries: &'a mut Vec<ObjectSummary>,
+    input_names: &'a mut Vec<String>,
+}
+
+impl LoadState<'_> {
+    fn add_loaded_object(
+        &mut self,
+        label: String,
+        object: crate::format::obj::ObjectFile,
+        summary: ObjectSummary,
+    ) -> anyhow::Result<()> {
+        if self.verbose {
+            println!("parsed {}: {} commands", label, object.commands.len());
+            println!(
+                "  align={} sections: declared={} observed={} symbols={} xrefs={} requests={}",
+                summary.object_align,
+                summary.declared_section_sizes.len(),
+                summary.observed_section_usage.len(),
+                summary.symbols.len(),
+                summary.xrefs.len(),
+                summary.requests.len()
+            );
+        }
+        enqueue_requests(self.pending, self.base_dir, &summary.requests)?;
+        self.objects.push(object);
+        self.summaries.push(summary);
+        self.input_names.push(label);
+        Ok(())
     }
-    enqueue_requests(pending, base_dir, &summary.requests)?;
-    objects.push(object);
-    summaries.push(summary);
-    input_names.push(label);
-    Ok(())
 }
 
 fn display_name(path: &Path) -> String {

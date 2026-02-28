@@ -18,56 +18,25 @@ pub fn write_map(
     layout: &LayoutPlan,
     input_paths: &[String],
 ) -> Result<()> {
-    let text_size = layout
-        .total_size_by_section
-        .get(&SectionKind::Text)
-        .copied()
-        .unwrap_or(0);
-    let data_size = layout
-        .total_size_by_section
-        .get(&SectionKind::Data)
-        .copied()
-        .unwrap_or(0);
-    let bss_only = layout
-        .total_size_by_section
-        .get(&SectionKind::Bss)
-        .copied()
-        .unwrap_or(0);
-    let common_only = layout
-        .total_size_by_section
-        .get(&SectionKind::Common)
-        .copied()
-        .unwrap_or(0);
-    let text = build_map_text(
-        exec_output_path,
-        summaries,
-        layout,
-        text_size,
-        data_size,
-        bss_only,
-        common_only,
-        input_paths,
-    );
+    let sizes = MapSizes::from_layout(layout);
+    let text = build_map_text(exec_output_path, summaries, layout, sizes, input_paths);
     let text = text.replace('\n', "\r\n");
     std::fs::write(output_path, text).with_context(|| format!("failed to write {output_path}"))?;
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_map_text(
     exec_output_path: &str,
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
-    text_size: u32,
-    data_size: u32,
-    bss_only: u32,
-    common_only: u32,
+    sizes: MapSizes,
     input_paths: &[String],
 ) -> String {
-    let bss_size = bss_only
-        .saturating_add(common_only)
+    let bss_size = sizes
+        .bss_only
+        .saturating_add(sizes.common_only)
         .saturating_add(super::section_total(layout, SectionKind::Stack));
-    let exec = super::resolve_exec_address(summaries, text_size, data_size, bss_size)
+    let exec = super::resolve_exec_address(summaries, sizes.text_size, sizes.data_size, bss_size)
         .ok()
         .flatten()
         .unwrap_or(0);
@@ -166,6 +135,51 @@ pub(crate) fn build_map_text(
         }
     }
     out
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct MapSizes {
+    text_size: u32,
+    data_size: u32,
+    bss_only: u32,
+    common_only: u32,
+}
+
+impl MapSizes {
+    fn from_layout(layout: &LayoutPlan) -> Self {
+        Self {
+            text_size: layout
+                .total_size_by_section
+                .get(&SectionKind::Text)
+                .copied()
+                .unwrap_or(0),
+            data_size: layout
+                .total_size_by_section
+                .get(&SectionKind::Data)
+                .copied()
+                .unwrap_or(0),
+            bss_only: layout
+                .total_size_by_section
+                .get(&SectionKind::Bss)
+                .copied()
+                .unwrap_or(0),
+            common_only: layout
+                .total_size_by_section
+                .get(&SectionKind::Common)
+                .copied()
+                .unwrap_or(0),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn new(text_size: u32, data_size: u32, bss_only: u32, common_only: u32) -> Self {
+        Self {
+            text_size,
+            data_size,
+            bss_only,
+            common_only,
+        }
+    }
 }
 
 fn build_definition_owner_map(summaries: &[ObjectSummary]) -> HashMap<Vec<u8>, usize> {

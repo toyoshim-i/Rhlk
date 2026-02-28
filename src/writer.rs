@@ -11,7 +11,7 @@ use crate::resolver::{ObjectSummary, SectionKind, Symbol};
 mod map;
 pub use map::write_map;
 #[cfg(test)]
-pub(crate) use map::build_map_text;
+pub(crate) use map::{MapSizes, build_map_text};
 mod ctor_dtor;
 mod opcode;
 mod expr;

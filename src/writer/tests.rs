@@ -7,7 +7,7 @@
     use crate::layout::plan_layout;
     use crate::resolver::{ObjectSummary, SectionKind, Symbol, resolve_object};
     use crate::writer::{
-        apply_x_header_options, build_map_text, build_r_payload, build_x_image,
+        MapSizes, apply_x_header_options, build_map_text, build_r_payload, build_x_image,
         build_x_image_with_options, validate_link_inputs,
         patch_section_size_info,
         validate_r_convertibility,
@@ -287,7 +287,7 @@
             value: 1,
         });
         let layout = plan_layout(&[s0.clone(), s1.clone()]);
-        let text = build_map_text("a.x", &[s0, s1], &layout, 4, 2, 0, 0, &[]);
+        let text = build_map_text("a.x", &[s0, s1], &layout, MapSizes::new(4, 2, 0, 0), &[]);
         assert!(text.contains("=========================================================="));
         assert!(text.contains("A:a.x"));
         assert!(text.contains("exec\t\t\t : 00000000"));

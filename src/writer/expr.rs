@@ -82,146 +82,177 @@ fn evaluate_push_80(
     None
 }
 
-#[allow(clippy::too_many_lines)]
 pub(super) fn evaluate_a0(lo: u8, calc_stack: &mut Vec<ExprEntry>) -> Vec<&'static str> {
+    const STACK_UNDERFLOW: &str = "計算用スタックに値がありません";
     match lo {
         0x02 => {
-            let Some(a) = calc_stack.pop() else {
-                return vec!["計算用スタックに値がありません"];
+            let Some(entry) = calc_stack.pop() else {
+                return vec![STACK_UNDERFLOW];
             };
-            calc_stack.push(a);
+            calc_stack.push(entry);
             Vec::new()
         }
         0x01 | 0x03 | 0x04 | 0x05 | 0x06 | 0x07 => {
-            let Some(mut a) = calc_stack.pop() else {
-                return vec!["計算用スタックに値がありません"];
+            let Ok(entry) = pop_unary(calc_stack, STACK_UNDERFLOW) else {
+                return vec![STACK_UNDERFLOW];
             };
-            if a.stat > 0 {
-                a.stat = -1;
-                calc_stack.push(a);
-                return vec!["不正な式"];
-            }
-            if a.stat == 0 {
-                a.value = match lo {
-                    0x01 => a.value.wrapping_neg(),
-                    0x03 => {
-                        if a.value == 0 {
-                            -1
-                        } else {
-                            0
-                        }
-                    }
-                    0x04 => i32::from((((a.value.cast_unsigned() & 0xffff) >> 8) as u16).cast_signed()),
-                    0x05 => (a.value.cast_unsigned() & 0xff).cast_signed(),
-                    0x06 => (a.value.cast_unsigned() >> 16).cast_signed(),
-                    0x07 => (a.value.cast_unsigned() & 0xffff).cast_signed(),
-                    _ => a.value,
-                };
-            }
-            calc_stack.push(a);
-            Vec::new()
+            let (result, errors) = evaluate_a0_unary(lo, entry);
+            calc_stack.push(result);
+            errors
         }
         0x0a | 0x0b => {
-            let Some(a) = calc_stack.pop() else {
-                return vec!["計算用スタックに値がありません"];
+            let Ok((lhs, rhs)) = pop_binary(calc_stack, STACK_UNDERFLOW) else {
+                return vec![STACK_UNDERFLOW];
             };
-            let Some(b) = calc_stack.pop() else {
-                calc_stack.push(a);
-                return vec!["計算用スタックに値がありません"];
-            };
-            let (res, errors) = eval_chk_calcexp2(a, b);
-            if let Some(mut r) = res {
-                if r.stat >= 0 && a.value == 0 {
-                    r.stat = -1;
-                    calc_stack.push(r);
-                    let mut out = errors;
-                    out.push("ゼロ除算");
-                    return out;
-                }
-                if r.stat == 0 {
-                    if lo == 0x0a {
-                        r.value = b.value.wrapping_div(a.value);
-                    } else {
-                        // HLK's divs_d0d1 leaves abs(remainder).
-                        r.value = b.value.wrapping_rem(a.value).abs();
-                    }
-                }
-                calc_stack.push(r);
+            let (result, errors) = evaluate_a0_div_mod(lo, lhs, rhs);
+            if let Some(result) = result {
+                calc_stack.push(result);
             }
             errors
         }
         0x0f => {
-            let Some(a) = calc_stack.pop() else {
-                return vec!["計算用スタックに値がありません"];
+            let Ok((lhs, rhs)) = pop_binary(calc_stack, STACK_UNDERFLOW) else {
+                return vec![STACK_UNDERFLOW];
             };
-            let Some(b) = calc_stack.pop() else {
-                calc_stack.push(a);
-                return vec!["計算用スタックに値がありません"];
-            };
-            let mut errors = Vec::new();
-            let mut out = ExprEntry {
-                stat: -1,
-                value: b.value.wrapping_sub(a.value),
-            };
-            if a.stat == 0 {
-                out.stat = b.stat ^ a.stat;
-            } else if a.stat < 0 || b.stat < 0 {
-                out.stat = -1;
-            } else if a.stat != b.stat {
-                errors.push("不正な式");
-            } else {
-                out.stat = b.stat ^ a.stat;
-            }
-            calc_stack.push(out);
+            let (result, errors) = evaluate_a0_sub(lhs, rhs);
+            calc_stack.push(result);
             errors
         }
         0x10 => {
-            let Some(a) = calc_stack.pop() else {
-                return vec!["計算用スタックに値がありません"];
+            let Ok((lhs, rhs)) = pop_binary(calc_stack, STACK_UNDERFLOW) else {
+                return vec![STACK_UNDERFLOW];
             };
-            let Some(b) = calc_stack.pop() else {
-                calc_stack.push(a);
-                return vec!["計算用スタックに値がありません"];
-            };
-            let mut errors = Vec::new();
-            let mut out = ExprEntry {
-                stat: -1,
-                value: b.value.wrapping_add(a.value),
-            };
-            if a.stat == 0 {
-                out.stat = b.stat ^ a.stat;
-            } else if a.stat < 0 {
-                out.stat = -1;
-            } else if b.stat == 0 {
-                out.stat = b.stat ^ a.stat;
-            } else {
-                if b.stat >= 0 {
-                    errors.push("不正な式");
-                }
-                out.stat = -1;
-            }
-            calc_stack.push(out);
+            let (result, errors) = evaluate_a0_add(lhs, rhs);
+            calc_stack.push(result);
             errors
         }
         0x09 | 0x0c | 0x0d | 0x0e | 0x11..=0x1d => {
-            let Some(a) = calc_stack.pop() else {
-                return vec!["計算用スタックに値がありません"];
+            let Ok((lhs, rhs)) = pop_binary(calc_stack, STACK_UNDERFLOW) else {
+                return vec![STACK_UNDERFLOW];
             };
-            let Some(b) = calc_stack.pop() else {
-                calc_stack.push(a);
-                return vec!["計算用スタックに値がありません"];
-            };
-            let (res, errors) = eval_chk_calcexp2(a, b);
-            if let Some(mut r) = res {
-                if r.stat == 0 {
-                    r.value = eval_a0_const_binop(lo, b.value, a.value);
-                }
-                calc_stack.push(r);
+            let (result, errors) = evaluate_a0_binary(lo, lhs, rhs);
+            if let Some(result) = result {
+                calc_stack.push(result);
             }
             errors
         }
         _ => Vec::new(),
     }
+}
+
+fn pop_unary(calc_stack: &mut Vec<ExprEntry>, underflow_message: &'static str) -> Result<ExprEntry, &'static str> {
+    calc_stack.pop().ok_or(underflow_message)
+}
+
+fn pop_binary(
+    calc_stack: &mut Vec<ExprEntry>,
+    underflow_message: &'static str,
+) -> Result<(ExprEntry, ExprEntry), &'static str> {
+    let Some(lhs) = calc_stack.pop() else {
+        return Err(underflow_message);
+    };
+    let Some(rhs) = calc_stack.pop() else {
+        calc_stack.push(lhs);
+        return Err(underflow_message);
+    };
+    Ok((lhs, rhs))
+}
+
+fn evaluate_a0_unary(lo: u8, mut entry: ExprEntry) -> (ExprEntry, Vec<&'static str>) {
+    if entry.stat > 0 {
+        entry.stat = -1;
+        return (entry, vec!["不正な式"]);
+    }
+    if entry.stat == 0 {
+        entry.value = match lo {
+            0x01 => entry.value.wrapping_neg(),
+            0x03 => {
+                if entry.value == 0 {
+                    -1
+                } else {
+                    0
+                }
+            }
+            0x04 => i32::from((((entry.value.cast_unsigned() & 0xffff) >> 8) as u16).cast_signed()),
+            0x05 => (entry.value.cast_unsigned() & 0xff).cast_signed(),
+            0x06 => (entry.value.cast_unsigned() >> 16).cast_signed(),
+            0x07 => (entry.value.cast_unsigned() & 0xffff).cast_signed(),
+            _ => entry.value,
+        };
+    }
+    (entry, Vec::new())
+}
+
+fn evaluate_a0_div_mod(lo: u8, lhs: ExprEntry, rhs: ExprEntry) -> (Option<ExprEntry>, Vec<&'static str>) {
+    let (res, errors) = eval_chk_calcexp2(lhs, rhs);
+    let Some(mut result) = res else {
+        return (None, errors);
+    };
+    if result.stat >= 0 && lhs.value == 0 {
+        result.stat = -1;
+        let mut out = errors;
+        out.push("ゼロ除算");
+        return (Some(result), out);
+    }
+    if result.stat == 0 {
+        if lo == 0x0a {
+            result.value = rhs.value.wrapping_div(lhs.value);
+        } else {
+            // HLK's divs_d0d1 leaves abs(remainder).
+            result.value = rhs.value.wrapping_rem(lhs.value).abs();
+        }
+    }
+    (Some(result), errors)
+}
+
+fn evaluate_a0_sub(lhs: ExprEntry, rhs: ExprEntry) -> (ExprEntry, Vec<&'static str>) {
+    let mut errors = Vec::new();
+    let mut out = ExprEntry {
+        stat: -1,
+        value: rhs.value.wrapping_sub(lhs.value),
+    };
+    if lhs.stat == 0 {
+        out.stat = rhs.stat ^ lhs.stat;
+    } else if lhs.stat < 0 || rhs.stat < 0 {
+        out.stat = -1;
+    } else if lhs.stat != rhs.stat {
+        errors.push("不正な式");
+    } else {
+        out.stat = rhs.stat ^ lhs.stat;
+    }
+    (out, errors)
+}
+
+fn evaluate_a0_add(lhs: ExprEntry, rhs: ExprEntry) -> (ExprEntry, Vec<&'static str>) {
+    let mut errors = Vec::new();
+    let mut out = ExprEntry {
+        stat: -1,
+        value: rhs.value.wrapping_add(lhs.value),
+    };
+    if lhs.stat == 0 {
+        out.stat = rhs.stat ^ lhs.stat;
+    } else if lhs.stat < 0 {
+        out.stat = -1;
+    } else if rhs.stat == 0 {
+        out.stat = rhs.stat ^ lhs.stat;
+    } else {
+        if rhs.stat >= 0 {
+            errors.push("不正な式");
+        }
+        out.stat = -1;
+    }
+    (out, errors)
+}
+
+fn evaluate_a0_binary(lo: u8, lhs: ExprEntry, rhs: ExprEntry) -> (Option<ExprEntry>, Vec<&'static str>) {
+    let (res, errors) = eval_chk_calcexp2(lhs, rhs);
+    let Some(mut result) = res else {
+        return (None, errors);
+    };
+    if result.stat == 0 {
+        result.value = eval_a0_const_binop(lo, rhs.value, lhs.value);
+    }
+    (Some(result), errors)
 }
 
 fn eval_a0_const_binop(lo: u8, b: i32, a: i32) -> i32 {

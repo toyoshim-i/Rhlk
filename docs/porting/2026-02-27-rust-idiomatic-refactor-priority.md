@@ -181,6 +181,7 @@
 - P3-1: 完了
   - `load_objects_with_requests` の共通処理を `add_loaded_object` / `display_name` へ抽出。
   - `resolve_requested_path` を `Iterator::find` 化。
+  - object 読み込み状態を `LoadState` struct に統合し、`add_loaded_object` の多引数 helper（`too_many_arguments` 許可）を廃止。
 - P3-2: 完了
   - `writer.rs` の `patch_opaque` 系で数値変換 helper（`code_hi/lo`, `i32_low_u8/u16`, bit-cast helper）を導入。
   - `label_no as u32` 等を `u32::from(...)` に置換し、意図しない縮小 cast を削減。
@@ -219,6 +220,7 @@
   - `compute_g2lk_synthetic_symbols` の opcode 集計も `walk_commands` 経由に統一。
   - `writer/expr.rs` の direct byte/word 系4関数に共通する `xref/common` オペランド判定を `direct_xref_label_no` helper に集約。
   - direct byte/word 系の値検証（定数/xref）を `validate_direct_*` helper に集約し、重複したエラーメッセージ分岐を整理。
+  - `writer/expr.rs` の `evaluate_a0` を unary/div-mod/add/sub/binary helper 群へ分割し、`too_many_lines` 許可を廃止。
 - `select_archive_members` の `defs/unresolved` 更新ループを helper (`add_defined_symbols`, `extend_unresolved`) 化し、同一処理の重複を削減。
 - P1-2: 着手（第一段）
   - `linker.rs` の `resolve_map_output` を `Option<&String>` から `Option<&str>` へ移行し、呼び出し側を `as_deref()` ベースに更新。
@@ -243,6 +245,7 @@
   - `resolve_requested_path` の候補生成ロジックを closure 依存から直列処理へ整理し、探索順を維持したまま読みやすさを改善。
   - `writer/map.rs` でシンボル定義者マップを `String` 保持から owner index 保持へ変更し、xref 表示時のみ名前解決する形にして不要 clone を削減。
   - `writer/map.rs` で object placement 参照を `HashMap` clone から borrow 参照に変更し、セクション先頭位置計算の一時確保を削減。
+  - `writer/map.rs` の `build_map_text` 引数を `MapSizes` struct 化し、サイズ引数の乱立と `too_many_arguments` 許可を廃止。
 
 検証:
 - `cargo test -q --manifest-path Cargo.toml`: pass
