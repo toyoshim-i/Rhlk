@@ -1406,7 +1406,7 @@ fn evaluate_push_80_for_patch(
     summary: &ObjectSummary,
     global_symbol_addrs: &HashMap<Vec<u8>, GlobalSymbolAddr>,
 ) -> Option<ExprEntry> {
-    if matches!(lo, 0xfc..=0xff) {
+    if is_common_or_xref_section(lo) {
         let label_no = read_u16_be(payload)?;
         let xref = summary.xrefs.iter().find(|x| x.value == u32::from(label_no))?;
         let sym = global_symbol_addrs.get(&xref.name)?;
@@ -1420,7 +1420,7 @@ fn evaluate_push_80_for_patch(
             value: u32_bits_to_i32(sym.addr),
         });
     }
-    if lo <= 0x0a {
+    if reloc_section_kind(lo).is_some() || lo == 0x00 {
         let value = read_i32_be(payload)?;
         let stat = match lo {
             0x00 => 0,
@@ -1488,13 +1488,13 @@ fn resolve_opaque_value(
         return Some(u32_bits_to_i32(sym.addr).wrapping_sub(base));
     }
 
-    let mut base = if matches!(lo, 0xfc..=0xff) {
+    let mut base = if is_common_or_xref_section(lo) {
         let label_no = read_u16_be(payload)?;
         let xref = summary.xrefs.iter().find(|x| x.value == u32::from(label_no))?;
         global_symbol_addrs
             .get(&xref.name)
             .map(|v| u32_bits_to_i32(v.addr))?
-    } else if (0x01..=0x0a).contains(&lo) {
+    } else if reloc_section_kind(lo).is_some() {
         let v = read_i32_be(payload)?;
         section_value_with_placement(lo, v, placement)?
     } else if lo == 0x00 {
@@ -1513,7 +1513,7 @@ fn resolve_opaque_value(
             | opcode::OPH_ADD_XREF_LONG
             | opcode::OPH_ADD_XREF_BYTE
     ) {
-        let off_pos = if matches!(lo, 0xfc..=0xff) { 2 } else { 4 };
+        let off_pos = if is_common_or_xref_section(lo) { 2 } else { 4 };
         let off = read_i32_be(payload.get(off_pos..)?)?;
         base = base.wrapping_add(off);
     }
@@ -1522,19 +1522,7 @@ fn resolve_opaque_value(
 }
 
 fn section_value_with_placement(lo: u8, value: i32, placement: &BTreeMap<SectionKind, u32>) -> Option<i32> {
-    let sect = match lo {
-        0x01 => SectionKind::Text,
-        0x02 => SectionKind::Data,
-        0x03 => SectionKind::Bss,
-        0x04 => SectionKind::Stack,
-        0x05 => SectionKind::RData,
-        0x06 => SectionKind::RBss,
-        0x07 => SectionKind::RStack,
-        0x08 => SectionKind::RLData,
-        0x09 => SectionKind::RLBss,
-        0x0a => SectionKind::RLStack,
-        _ => return None,
-    };
+    let sect = reloc_section_kind(lo)?;
     let base = u32_bits_to_i32(placement.get(&sect).copied().unwrap_or(0));
     Some(base.wrapping_add(value))
 }
@@ -1571,7 +1559,31 @@ fn should_relocate(
 }
 
 fn is_reloc_section(sect: u8) -> bool {
-    matches!(sect, 0x01..=0x0a)
+    reloc_section_kind(sect).is_some()
+}
+
+fn reloc_section_kind(section: u8) -> Option<SectionKind> {
+    let kind = SectionKind::from_u8(section);
+    match kind {
+        SectionKind::Text
+        | SectionKind::Data
+        | SectionKind::Bss
+        | SectionKind::Stack
+        | SectionKind::RData
+        | SectionKind::RBss
+        | SectionKind::RStack
+        | SectionKind::RLData
+        | SectionKind::RLBss
+        | SectionKind::RLStack => Some(kind),
+        _ => None,
+    }
+}
+
+fn is_common_or_xref_section(section: u8) -> bool {
+    matches!(
+        SectionKind::from_u8(section),
+        SectionKind::RLCommon | SectionKind::RCommon | SectionKind::Common | SectionKind::Xref
+    )
 }
 
 fn bump_cursor(map: &mut BTreeMap<SectionKind, u32>, section: SectionKind, add: u32) {
