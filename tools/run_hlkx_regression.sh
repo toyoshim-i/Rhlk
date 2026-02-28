@@ -21,7 +21,7 @@ else
 fi
 HAS_CMD_DEFAULT="${RUN68_CMD_DEFAULT} has060.x"
 HLK_CMD_DEFAULT="${RUN68_CMD_DEFAULT} ${ROOT_DIR}/external/hlkx/build/hlk.x"
-RHLK_CMD_DEFAULT="cargo run --manifest-path ${ROOT_DIR}/Rhlk/Cargo.toml --quiet --"
+RHLK_CMD_DEFAULT="cargo run --manifest-path ${ROOT_DIR}/Cargo.toml --quiet --"
 
 if [[ -f "${HAS_BIN_DEFAULT}" ]]; then
   HAS_CMD_DEFAULT="${RUN68_CMD_DEFAULT} ${HAS_BIN_DEFAULT}"

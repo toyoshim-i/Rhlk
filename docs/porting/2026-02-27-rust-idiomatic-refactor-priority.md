@@ -4,7 +4,7 @@
 `Rhlk` 実装のうち「動くが Rust らしくない」箇所を整理し、保守性と安全性の観点で実施順を固定する。
 
 ## 監査方法
-- 対象: `Rhlk/src/*.rs`
+- 対象: `src/*.rs`
 - 観点:
   - エラー型の明確さ
   - API 設計（引数の型安全）
@@ -30,7 +30,7 @@
 
 ### P0-1: 文字列一致ベースのエラー変換を型付きエラーへ置換
 - 該当:
-  - `Rhlk/src/writer.rs:35-45`
+  - `src/writer.rs:35-45`
 - 問題:
   - `err.to_string().contains("...")` で分岐しており、文言変更で壊れる。
 - 改善:
@@ -39,19 +39,19 @@
 
 ### P0-2: 巨大モジュールの責務分離（特に writer）
 - 該当:
-  - `Rhlk/src/writer.rs`（全 5346 行）
-  - `Rhlk/src/writer.rs:2532` 以降に大量 test 同居
+  - `src/writer.rs`（全 5346 行）
+  - `src/writer.rs:2532` 以降に大量 test 同居
 - 問題:
   - 1 ファイルに出力生成・式評価・SCD処理・map処理・診断処理が集中。
   - レビュー/変更影響の見通しが悪い。
 - 改善:
   - `writer/x.rs`, `writer/r.rs`, `writer/map.rs`, `writer/expr.rs`, `writer/scd.rs` に分割。
-  - test も機能別に `Rhlk/tests/*` へ段階移行。
+  - test も機能別に `tests/*` へ段階移行。
 
 ### P0-3: オーケストレーション関数の分割と設定 struct 化
 - 該当:
-  - `Rhlk/src/linker.rs:12-121` (`run`)
-  - `Rhlk/src/writer.rs:10-25` (`write_output` の多引数)
+  - `src/linker.rs:12-121` (`run`)
+  - `src/writer.rs:10-25` (`write_output` の多引数)
 - 問題:
   - bool/数値の並び引数が多く、誤渡しリスクが高い。
   - `run` が入力展開・注入・検証・配置・出力を1関数で処理。
@@ -63,9 +63,9 @@
 
 ### P1-1: 不要 clone と一時 Vec 再構築の削減
 - 該当:
-  - `Rhlk/src/linker.rs:688-722` (`select_archive_members`)
-  - `Rhlk/src/linker.rs:551-553`（archive member 追加時 clone）
-  - `Rhlk/src/main.rs:35`（`argv.clone()`）
+  - `src/linker.rs:688-722` (`select_archive_members`)
+  - `src/linker.rs:551-553`（archive member 追加時 clone）
+  - `src/main.rs:35`（`argv.clone()`）
 - 問題:
   - ループ内 `to_vec()/clone()` が多く、可読性と効率を悪化。
 - 改善:
@@ -75,8 +75,8 @@
 
 ### P1-2: `String` ベースのパス API を `Path/PathBuf` 中心へ寄せる
 - 該当:
-  - `Rhlk/src/linker.rs:123-167`, `345-418`, `447-567`
-  - `Rhlk/src/writer.rs:1221-1223`
+  - `src/linker.rs:123-167`, `345-418`, `447-567`
+  - `src/writer.rs:1221-1223`
 - 問題:
   - パスを都度 `String` 化しており OS 差異と変換コストが増える。
 - 改善:
@@ -85,8 +85,8 @@
 
 ### P1-3: コマンド走査ロジックの重複統合
 - 該当:
-  - `Rhlk/src/writer.rs:1343-1411` (`patch_opaque_commands`)
-  - `Rhlk/src/writer.rs:1763-1878` (`validate_unsupported_expression_commands`)
+  - `src/writer.rs:1343-1411` (`patch_opaque_commands`)
+  - `src/writer.rs:1763-1878` (`validate_unsupported_expression_commands`)
 - 問題:
   - 同種の `Command` 走査・カーソル更新が複数箇所に散在。
 - 改善:
@@ -96,7 +96,7 @@
 
 ### P2-1: `main.rs` の手作業 argv 前処理を専用関数へ
 - 該当:
-  - `Rhlk/src/main.rs:4-34`
+  - `src/main.rs:4-34`
 - 問題:
   - オプション互換前処理が main に直書きで拡張しづらい。
 - 改善:
@@ -104,7 +104,7 @@
 
 ### P2-2: リテラル値の意味付け強化
 - 該当:
-  - `Rhlk/src/writer.rs` の多数の opcode 分岐（例: `0x4c01`, `0xe00c`）
+  - `src/writer.rs` の多数の opcode 分岐（例: `0x4c01`, `0xe00c`）
 - 問題:
   - 意味がコード値に埋め込まれ、追跡が困難。
 - 改善:
@@ -123,8 +123,8 @@
 
 ### P3-1: `linker.rs` の入力ロード補助整理
 - 該当:
-  - `Rhlk/src/linker.rs:load_objects_with_requests`
-  - `Rhlk/src/linker.rs:resolve_requested_path`
+  - `src/linker.rs:load_objects_with_requests`
+  - `src/linker.rs:resolve_requested_path`
 - 問題:
   - 単一関数に責務が集中し、エラー文言組み立てが重複。
   - Clippy の `too_many_lines` / `manual_find` が残る。
@@ -135,7 +135,7 @@
 
 ### P3-2: `writer.rs` の符号/桁あふれ cast 集中地帯の明示化
 - 該当:
-  - `Rhlk/src/writer.rs` の `patch_opaque_commands` 周辺
+  - `src/writer.rs` の `patch_opaque_commands` 周辺
 - 問題:
   - `as` による縮小変換が多く、意図の明確化が必要。
 - 改善:
@@ -144,7 +144,7 @@
 
 ### P3-3: `format/obj.rs` の opcode 判定テーブル整理
 - 該当:
-  - `Rhlk/src/format/obj.rs` の `has_payload` / `payload_size_from_code`
+  - `src/format/obj.rs` の `has_payload` / `payload_size_from_code`
 - 問題:
   - `match_same_arms` が多く、条件の意図が読み取りづらい。
 - 改善:
@@ -159,7 +159,7 @@
 6. P2 系
 
 ## 受け入れ条件（Refactor 完了判定）
-- `cargo test -q --manifest-path Rhlk/Cargo.toml` が全通
+- `cargo test -q --manifest-path Cargo.toml` が全通
 - `./tools/run_hlkx_regression.sh` が全 PASS
 - 既知差分（map ヘッダパス正規化のみ）に変化なし
 
@@ -241,6 +241,6 @@
   - `resolve_requested_path` の候補生成ロジックを closure 依存から直列処理へ整理し、探索順を維持したまま読みやすさを改善。
 
 検証:
-- `cargo test -q --manifest-path Rhlk/Cargo.toml`: pass
+- `cargo test -q --manifest-path Cargo.toml`: pass
 - `./tools/run_hlkx_regression.sh`: All regression cases matched
 - `cargo clippy --all-targets --all-features -- -W clippy::all -W clippy::pedantic`: pass

@@ -87,7 +87,7 @@ cmake --build external/run68x/build
 ```bash
 HAS_CMD="/path/to/run68 has060.x" \
 HLK_CMD="/path/to/run68 /path/to/hlk.x" \
-RHLK_CMD="cargo run --manifest-path /abs/path/Rhlk/Cargo.toml --quiet --" \
+RHLK_CMD="cargo run --manifest-path /abs/path/Cargo.toml --quiet --" \
 ./tools/run_hlkx_regression.sh
 ```
 

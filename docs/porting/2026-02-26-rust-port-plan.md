@@ -48,12 +48,12 @@ HLKX 相当機能を、ホスト OS ネイティブ実行可能な Rust 実装�
 - オブジェクト 1 個入力で `.x` へ変換する最小パスを作る
 
 ## 進捗 (2026-02-27)
-- `Rhlk/src/format/obj.rs` に最小 parser を実装し、`c0/d0/e0/00/10/20/30/b2` を読み取り可能にした。
-- `Rhlk/src/linker.rs` から入力ファイルを読み込み、parser を実行する導線を追加した。
-- `Rhlk/src/resolver.rs` を追加し、section 使用量・シンボル・xref・request・start address を集約する resolver を実装した。
-- `Rhlk/src/layout.rs` を追加し、オブジェクトごとの align を考慮した section 配置計算（text/data/bss/stack/r*）を実装した。
-- `Rhlk/src/layout.rs` に common/rcommon/rlcommon の統合ルールを追加し、同名 common の最大サイズ採用、通常定義での上書き、種別衝突の診断カウントを実装した。
-- `Rhlk/src/writer.rs` を追加し、現在対応済みコマンドから `.r` と最小 `.x`（HUヘッダ + text/data + bss size）を生成して `-o` で書き出す writer を実装した。
+- `src/format/obj.rs` に最小 parser を実装し、`c0/d0/e0/00/10/20/30/b2` を読み取り可能にした。
+- `src/linker.rs` から入力ファイルを読み込み、parser を実行する導線を追加した。
+- `src/resolver.rs` を追加し、section 使用量・シンボル・xref・request・start address を集約する resolver を実装した。
+- `src/layout.rs` を追加し、オブジェクトごとの align を考慮した section 配置計算（text/data/bss/stack/r*）を実装した。
+- `src/layout.rs` に common/rcommon/rlcommon の統合ルールを追加し、同名 common の最大サイズ採用、通常定義での上書き、種別衝突の診断カウントを実装した。
+- `src/writer.rs` を追加し、現在対応済みコマンドから `.r` と最小 `.x`（HUヘッダ + text/data + bss size）を生成して `-o` で書き出す writer を実装した。
 - `.x` writer を拡張し、定義済みシンボルから symbol table を生成してヘッダの `symbol_data size` に反映した（reloc/SCD は未対応）。
 - parser 対応コマンドを拡張し、`4x/5x/6x/8x/9x/a0/b0ff/e00c/e00d` 系を `Opaque` として読み取り可能にした（意味解釈は未実装）。
 - `.x` writer を拡張し、`42/46/52/56` の long 参照から最小 relocation table を生成してヘッダの `relocate_size` に反映した。

@@ -1,7 +1,7 @@
 # Rhlk
 
 X68000 向けリンカ **HLK/HLKX** を、Rust でホスト OS ネイティブ動作させるために移植したプロジェクトです。  
-`Rhlk/` 配下に Rust 実装本体があります。
+Rust 実装本体はリポジトリトップ直下（`src/`, `Cargo.toml`）にあります。
 
 ## このリポジトリについて
 - オリジナル実装: HLK / HLKX（68000 アセンブリ実装）
@@ -18,7 +18,7 @@ X68000 向けリンカ **HLK/HLKX** を、Rust でホスト OS ネイティブ�
 以下の検証を継続実施しています。
 
 - Rust unit/integration tests
-  - `cargo test -q --manifest-path Rhlk/Cargo.toml`
+  - `cargo test -q --manifest-path Cargo.toml`
 - オリジナル HLKX との回帰比較（run68x 利用）
   - `./tools/run_hlkx_regression.sh`
   - 標準出力/標準エラーは統合比較

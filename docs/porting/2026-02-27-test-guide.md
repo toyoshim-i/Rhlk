@@ -8,7 +8,7 @@ Rhlk のテストを、ローカル環境で再現可能な形で実行するた
   - 対象: `clippy` + Rust test + HLK 互換回帰を連続実行
   - 実行: `./tools/run_quality_gate.sh`
 - Rust unit/integration test
-  - 対象: `Rhlk/src/*` の unit test、`Rhlk/tests/*` の integration test
+  - 対象: `src/*` の unit test、`tests/*` の integration test
   - 実行: `cargo test`
 - HLK 互換回帰テスト（run68 ベース）
   - 対象: `external/hlkx/tests` を入力に、原版 HLK と rhlk の出力比較
@@ -60,12 +60,12 @@ cmake --build external/run68x/build
 
 2.1 `clippy`
 ```bash
-cargo clippy --manifest-path Rhlk/Cargo.toml --all-targets --all-features -- -W clippy::all -W clippy::pedantic
+cargo clippy --manifest-path Cargo.toml --all-targets --all-features -- -W clippy::all -W clippy::pedantic
 ```
 
 2.2 Rust テスト
 ```bash
-cargo test -q --manifest-path Rhlk/Cargo.toml
+cargo test -q --manifest-path Cargo.toml
 ```
 
 2.3 HLK 互換回帰
@@ -91,7 +91,7 @@ cargo test -q --manifest-path Rhlk/Cargo.toml
 ```bash
 HAS_CMD="/path/to/run68 has060.x" \
 HLK_CMD="/path/to/run68 /path/to/hlk.x" \
-RHLK_CMD="cargo run --manifest-path /abs/path/Rhlk/Cargo.toml --quiet --" \
+RHLK_CMD="cargo run --manifest-path /abs/path/Cargo.toml --quiet --" \
 ./tools/run_hlkx_regression.sh
 ```
 

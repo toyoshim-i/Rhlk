@@ -10,6 +10,6 @@
 - この差分はリンクロジック差分ではなく実行環境差分なので、比較対象から除外する。
 
 ## 実装位置
-- map 出力: `Rhlk/src/writer.rs` (`build_map_text`)
+- map 出力: `src/writer.rs` (`build_map_text`)
 - raw 比較正規化: `tools/run_hlkx_regression.sh` (`normalize_map_raw`)
 - 回帰方針の説明: `docs/porting/2026-02-27-regression-harness.md`
