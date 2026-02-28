@@ -67,7 +67,7 @@ jobs:
         env:
           RUST_CHECK_RESULT: ${{ needs.rust-check.result }}
           SHA7: ${{ github.sha }}
-          BADGE_DIR: ${{ vars.BADGE_DIR != '' && vars.BADGE_DIR || 'rhlk' }}
+          BADGE_DIR: ${{ vars.BADGE_DIR != '' && vars.BADGE_DIR || 'badges/rhlk' }}
         run: |
           mkdir -p "badge-repo/${BADGE_DIR}"
           short_sha="${SHA7:0:7}"
@@ -166,7 +166,7 @@ jobs:
         env:
           COMPAT_RESULT: ${{ needs.compat-regression.result }}
           SHA7: ${{ github.sha }}
-          BADGE_DIR: ${{ vars.BADGE_DIR != '' && vars.BADGE_DIR || 'rhlk' }}
+          BADGE_DIR: ${{ vars.BADGE_DIR != '' && vars.BADGE_DIR || 'badges/rhlk' }}
         run: |
           mkdir -p "badge-repo/${BADGE_DIR}"
           short_sha="${SHA7:0:7}"

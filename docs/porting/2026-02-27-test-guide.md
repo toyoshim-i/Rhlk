@@ -15,9 +15,9 @@ Rhlk のテストを、ローカル環境で再現可能な形で実行するた
   - バッジ: `README.md` の `CI Main Status` / `Compat Manual Status` は外部バッジリポジトリの JSON endpoint を表示
   - 更新: `Publish Main Badge` / `Publish Compatibility Badge` が外部バッジリポジトリへ JSON を commit して更新
   - 必須設定:
-    - Actions Variable: `BADGE_REPO`（例: `toyoshim-i/rhlk-badges`）
+    - Actions Variable: `BADGE_REPO`（例: `toyoshim-i/action-stores`）
     - Actions Variable（任意）: `BADGE_REPO_BRANCH`（既定: `main`）
-    - Actions Variable（任意）: `BADGE_DIR`（既定: `rhlk`）
+    - Actions Variable（任意）: `BADGE_DIR`（既定: `rhlk`、共有運用なら `badges/rhlk` 推奨）
     - Actions Secret: `BADGE_REPO_TOKEN`（`BADGE_REPO` へ push 可能な token）
 - Rust unit/integration test
   - 対象: `src/*` の unit test、`tests/*` の integration test
