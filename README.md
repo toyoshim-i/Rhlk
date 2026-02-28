@@ -4,8 +4,6 @@
 [![Compat Manual Status](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftoyoshim-i%2Faction-stores%2Fmain%2Fbadges%2Frhlk%2Fcompat-manual.json)](https://github.com/toyoshim-i/Rhlk/actions/workflows/ci.yml?query=event%3Aworkflow_dispatch)
 [![Last Commit (main)](https://img.shields.io/github/last-commit/toyoshim-i/Rhlk/main?logo=github)](https://github.com/toyoshim-i/Rhlk/commits/main)
 
-Badge JSON is published to `toyoshim-i/action-stores` (`badges/rhlk`) via CI.
-
 X68000 向けリンカ **HLK/HLKX** を、Rust でホスト OS ネイティブ動作させるために移植したプロジェクトです。  
 Rust 実装本体はリポジトリトップ直下（`src/`, `Cargo.toml`）にあります。
 
