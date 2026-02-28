@@ -354,22 +354,20 @@ fn evaluate_direct_byte(
     summary: &ObjectSummary,
     global_symbols: &HashMap<Vec<u8>, Symbol>,
 ) -> Vec<&'static str> {
-    if is_common_or_xref_section(lo) {
-        if !is_xref_section(lo) {
-            return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
-        }
-        let Some(label_no) = read_u16_be(payload) else {
+    match direct_xref_label_no(lo, payload) {
+        Err(()) => return vec!["アドレス属性シンボルの値をバイトサイズで出力"],
+        Ok(Some(label_no)) => {
+            if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
+                if section_stat(section) != 0 {
+                    return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
+                }
+                if !fits_byte(value) {
+                    return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
+                }
+            }
             return Vec::new();
-        };
-        if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
-            if section_stat(section) != 0 {
-                return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
-            }
-            if !fits_byte(value) {
-                return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
-            }
         }
-        return Vec::new();
+        Ok(None) => {}
     }
     let Some(value) = read_i32_be(payload) else {
         return Vec::new();
@@ -386,24 +384,22 @@ fn evaluate_direct_byte_with_offset(
     summary: &ObjectSummary,
     global_symbols: &HashMap<Vec<u8>, Symbol>,
 ) -> Vec<&'static str> {
-    if is_common_or_xref_section(lo) {
-        if !is_xref_section(lo) {
-            return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
-        }
-        let Some(label_no) = read_u16_be(payload) else {
+    match direct_xref_label_no(lo, payload) {
+        Err(()) => return vec!["アドレス属性シンボルの値をバイトサイズで出力"],
+        Ok(Some(label_no)) => {
+            let offset = read_i32_be(&payload[2..]).unwrap_or(0);
+            if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
+                let total = value.wrapping_add(offset);
+                if section_stat(section) != 0 {
+                    return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
+                }
+                if !fits_byte(total) {
+                    return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
+                }
+            }
             return Vec::new();
-        };
-        let offset = read_i32_be(&payload[2..]).unwrap_or(0);
-        if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
-            let total = value.wrapping_add(offset);
-            if section_stat(section) != 0 {
-                return vec!["アドレス属性シンボルの値をバイトサイズで出力"];
-            }
-            if !fits_byte(total) {
-                return vec!["バイトサイズ(-$80〜$ff)で表現できない値"];
-            }
         }
-        return Vec::new();
+        Ok(None) => {}
     }
     let Some(value) = read_i32_be(payload) else {
         return Vec::new();
@@ -422,33 +418,31 @@ fn evaluate_direct_word(
     global_symbols: &HashMap<Vec<u8>, Symbol>,
     current: SectionKind,
 ) -> Vec<&'static str> {
-    if is_common_or_xref_section(lo) {
-        if !is_xref_section(lo) {
-            return vec!["アドレス属性シンボルの値をワードサイズで出力"];
-        }
-        let Some(label_no) = read_u16_be(payload) else {
-            return Vec::new();
-        };
-        if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
-            let stat = section_stat(section);
-            if stat == 0 {
-                if !fits_word(value) {
-                    return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
+    match direct_xref_label_no(lo, payload) {
+        Err(()) => return vec!["アドレス属性シンボルの値をワードサイズで出力"],
+        Ok(Some(label_no)) => {
+            if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
+                let stat = section_stat(section);
+                if stat == 0 {
+                    if !fits_word(value) {
+                        return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
+                    }
+                    return Vec::new();
                 }
-                return Vec::new();
-            }
-            if stat == 1 {
+                if stat == 1 {
+                    return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+                }
+                if is_base_section(current) {
+                    if !fits_word2(value) {
+                        return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
+                    }
+                    return Vec::new();
+                }
                 return vec!["アドレス属性シンボルの値をワードサイズで出力"];
             }
-            if is_base_section(current) {
-                if !fits_word2(value) {
-                    return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
-                }
-                return Vec::new();
-            }
-            return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+            return Vec::new();
         }
-        return Vec::new();
+        Ok(None) => {}
     }
     let Some(value) = read_i32_be(payload) else {
         return Vec::new();
@@ -466,35 +460,33 @@ fn evaluate_direct_word_with_offset(
     global_symbols: &HashMap<Vec<u8>, Symbol>,
     current: SectionKind,
 ) -> Vec<&'static str> {
-    if is_common_or_xref_section(lo) {
-        if !is_xref_section(lo) {
-            return vec!["アドレス属性シンボルの値をワードサイズで出力"];
-        }
-        let Some(label_no) = read_u16_be(payload) else {
-            return Vec::new();
-        };
-        let offset = read_i32_be(&payload[2..]).unwrap_or(0);
-        if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
-            let total = value.wrapping_add(offset);
-            let stat = section_stat(section);
-            if stat == 0 {
-                if !fits_word(total) {
-                    return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
+    match direct_xref_label_no(lo, payload) {
+        Err(()) => return vec!["アドレス属性シンボルの値をワードサイズで出力"],
+        Ok(Some(label_no)) => {
+            let offset = read_i32_be(&payload[2..]).unwrap_or(0);
+            if let Some((section, value)) = resolve_xref(label_no, summary, global_symbols) {
+                let total = value.wrapping_add(offset);
+                let stat = section_stat(section);
+                if stat == 0 {
+                    if !fits_word(total) {
+                        return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
+                    }
+                    return Vec::new();
                 }
-                return Vec::new();
-            }
-            if stat == 1 {
+                if stat == 1 {
+                    return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+                }
+                if is_base_section(current) {
+                    if !fits_word2(total) {
+                        return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
+                    }
+                    return Vec::new();
+                }
                 return vec!["アドレス属性シンボルの値をワードサイズで出力"];
             }
-            if is_base_section(current) {
-                if !fits_word2(total) {
-                    return vec!["ワードサイズ(-$8000〜$7fff)で表現できない値"];
-                }
-                return Vec::new();
-            }
-            return vec!["アドレス属性シンボルの値をワードサイズで出力"];
+            return Vec::new();
         }
-        return Vec::new();
+        Ok(None) => {}
     }
     let Some(value) = read_i32_be(payload) else {
         return Vec::new();
@@ -504,6 +496,16 @@ fn evaluate_direct_word_with_offset(
         return vec!["ワードサイズ(-$8000〜$ffff)で表現できない値"];
     }
     Vec::new()
+}
+
+fn direct_xref_label_no(lo: u8, payload: &[u8]) -> Result<Option<u16>, ()> {
+    if !is_common_or_xref_section(lo) {
+        return Ok(None);
+    }
+    if !is_xref_section(lo) {
+        return Err(());
+    }
+    Ok(read_u16_be(payload))
 }
 
 fn resolve_xref(
