@@ -1,7 +1,7 @@
 # Phase 1: Command Execution Audit (2026-02-27)
 
 > Status: Historical snapshot.  
-> 最新の最終結果は `README.md` の「現在の正」セクションを参照。
+> 最新の最終結果は [README.md] の「現在の正」セクションを参照。
 
 ## Scope
 `external/hlkx/src/make_exe.s` の命令実行系（`wrt_lbl_*`, `wrt_stk_*`, `a0xx`）と `src/writer.rs` 実装の対応監査。
@@ -44,3 +44,5 @@
 
 ## Remaining Focus (Next Slice)
 1. フェーズ 3（入力解決厳密化）へ移行
+
+[README.md]: README.md

@@ -27,4 +27,4 @@ GitHub API で `HLK` + `X68000` を検索し、`updated_at` / `pushed_at` / `arc
   - commit: `6ebf5029c435fc3ac62d293467e5fd34588048d8`
 
 ## 補足
-`hlkx` は Assembly 実装で、`README.md` に「SILK Hi-Speed Linker v3.01 の改造版・後継」と明記されている。
+`hlkx` は Assembly 実装で、[README.md](../../external/hlkx/README.md) に「SILK Hi-Speed Linker v3.01 の改造版・後継」と明記されている。

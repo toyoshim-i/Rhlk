@@ -2,7 +2,7 @@
 
 > Status: Historical snapshot。  
 > 本文のカバレッジ数値は当時の集計値。最新の最終評価は
-> `2026-02-27-final-executable-compare.md` を参照。
+> [2026-02-27-final-executable-compare.md] を参照。
 
 対象:
 - `external/hlkx/src/make_exe.s` の主要エラーメッセージ
@@ -46,3 +46,5 @@
   1. まず `run68 + has060` で再現可能な最小 `.s` を探索（優先）
   2. 難しい場合は、最小 `.o` フィクスチャ（手生成）を `tests/compat/fixtures` として導入
   3. 回帰ハーネスで「ソースから生成する `.o`」と「固定 `.o`」を混在実行できるよう拡張
+
+[2026-02-27-final-executable-compare.md]: 2026-02-27-final-executable-compare.md

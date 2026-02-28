@@ -1,11 +1,11 @@
 # Rhlk Docs Index
 
 ## 入口
-- `porting/README.md`
+- [porting/README.md]
   - 実装・検証・運用の正本インデックス。
-- `porting/DOCUMENT_MAP.md`
+- [porting/DOCUMENT_MAP.md]
   - `docs/porting` 各文書の役割（Authoritative / Reference / Historical）一覧。
-- `research/README.md`
+- [research/README.md]
   - 事前調査メモの一覧。
 
 ## 構成
@@ -15,5 +15,9 @@
   - 実装方針、回帰運用、監査、最終ポリシー。
 
 ## 運用
-- 新しい判断は `porting/README.md` と `porting/DOCUMENT_MAP.md` を先に更新する。
+- 新しい判断は [porting/README.md] と [porting/DOCUMENT_MAP.md] を先に更新する。
 - 履歴メモは上書きせず残し、必要なら新規文書を追加する。
+
+[porting/README.md]: porting/README.md
+[porting/DOCUMENT_MAP.md]: porting/DOCUMENT_MAP.md
+[research/README.md]: research/README.md

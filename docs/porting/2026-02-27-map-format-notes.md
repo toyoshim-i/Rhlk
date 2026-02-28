@@ -1,7 +1,7 @@
 # HLK `-p` / `make_map` 調査メモ (2026-02-27)
 
 > Status: Research notes。  
-> map 比較の運用ポリシーは `2026-02-27-map-path-policy.md` を正とする。
+> map 比較の運用ポリシーは [2026-02-27-map-path-policy.md] を正とする。
 
 ## 対象
 - `external/hlkx/src/main.s`
@@ -49,3 +49,5 @@
 1. section サイズ表を HLK 順（text/data/bss/common/stack/r*）で出力。
 2. symbol 行の並び順を HLK と照合して合わせる（name/addr/section の優先順確認）。
 3. map 比較を回帰ハーネスに追加（まずは normalize 後のテキスト比較）。
+
+[2026-02-27-map-path-policy.md]: 2026-02-27-map-path-policy.md

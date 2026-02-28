@@ -12,7 +12,7 @@ Rhlk のテストを、ローカル環境で再現可能な形で実行するた
   - 対象: `clippy` + Rust test（`cargo test`）
   - トリガー: `push`（`main`）, `pull_request`, `workflow_dispatch`
   - 補足: HLK 互換回帰は `workflow_dispatch` の `run_compat=true` 指定時のみ実行
-  - バッジ: `README.md` の `Compat Manual Status` は外部バッジリポジトリの JSON endpoint を表示
+  - バッジ: [README.md](../../README.md) の `Compat Manual Status` は外部バッジリポジトリの JSON endpoint を表示
   - 更新: `Publish Main Badge` / `Publish Compatibility Badge` が外部バッジリポジトリへ JSON を commit して更新
   - 必須設定:
     - Actions Variable: `BADGE_REPO`（例: `toyoshim-i/action-stores`）

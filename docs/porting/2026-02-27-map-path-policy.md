@@ -12,4 +12,4 @@
 ## 実装位置
 - map 出力: `src/writer.rs` (`build_map_text`)
 - raw 比較正規化: `tools/run_hlkx_regression.sh` (`normalize_map_raw`)
-- 回帰方針の説明: `docs/porting/2026-02-27-regression-harness.md`
+- 回帰方針の説明: [docs/porting/2026-02-27-regression-harness.md](2026-02-27-regression-harness.md)

@@ -30,17 +30,22 @@ Rust 実装本体はリポジトリトップ直下（`src/`, `Cargo.toml`）に�
   - HAS + 原版 HLK + Rhlk の end-to-end 比較を実施
 
 詳細な手順・結果は以下を参照してください。
-- `docs/porting/2026-02-27-test-guide.md`
-- `docs/porting/2026-02-27-regression-harness.md`
-- `docs/porting/2026-02-27-final-executable-compare.md`
+- [docs/porting/2026-02-27-test-guide.md]
+- [docs/porting/2026-02-27-regression-harness.md]
+- [docs/porting/2026-02-27-final-executable-compare.md]
 
 ## ライセンスについて
 - HLK は **そると氏** の著作物です。
 - HLKX 改造部分は **TcbnErik 氏** の著作物です。
 - 本リポジトリの Rust 移植部分は別実装ですが、オリジナル由来部分の権利関係を変更するものではありません。
-- オリジナル配布条件・ライセンスの詳細は必ず `external/hlkx/README.md` を参照してください。
+- オリジナル配布条件・ライセンスの詳細は必ず [external/hlkx/README.md] を参照してください。
 
 ## 関連
 - HLKX: `external/hlkx`
 - run68x: `external/run68x`
 - u8tosj: `external/u8tosj`
+
+[docs/porting/2026-02-27-test-guide.md]: docs/porting/2026-02-27-test-guide.md
+[docs/porting/2026-02-27-regression-harness.md]: docs/porting/2026-02-27-regression-harness.md
+[docs/porting/2026-02-27-final-executable-compare.md]: docs/porting/2026-02-27-final-executable-compare.md
+[external/hlkx/README.md]: external/hlkx/README.md

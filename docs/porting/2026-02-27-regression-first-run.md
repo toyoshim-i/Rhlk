@@ -1,8 +1,8 @@
 # 回帰ハーネス初回実行結果 (2026-02-27)
 
 > Status: Historical snapshot (初回実行時点の記録)。  
-> 最新の一致状況は `2026-02-27-final-executable-compare.md` と
-> `2026-02-27-regression-harness.md` を参照。
+> 最新の一致状況は [2026-02-27-final-executable-compare.md] と
+> [2026-02-27-regression-harness.md] を参照。
 
 実行コマンド:
 
@@ -37,3 +37,6 @@
 2. `dup_entry` の重複開始アドレス検出
 3. `reltbl_odd` の再配置テーブル妥当性検証
 4. メッセージ互換方針（stdout/stderr と文言）の固定
+
+[2026-02-27-final-executable-compare.md]: 2026-02-27-final-executable-compare.md
+[2026-02-27-regression-harness.md]: 2026-02-27-regression-harness.md

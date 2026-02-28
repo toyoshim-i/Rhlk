@@ -18,7 +18,7 @@
 - `.map` は「実フォーマット比較（raw）」を実施し、ヘッダ2行目の実行ファイルパスだけ正規化して比較する。
 - 互換性確認の補助として `name/addr/section` 抽出の正規化比較も併用する。
 - `.map` 比較は両実装の終了コードが `0` のケースに限定する。
-- map ヘッダのパス扱い方針は [`2026-02-27-map-path-policy.md`](./2026-02-27-map-path-policy.md) を正とする。
+- map ヘッダのパス扱い方針は [2026-02-27-map-path-policy.md](./2026-02-27-map-path-policy.md) を正とする。
 
 ## 追加ファイル
 - `tools/run_hlkx_regression.sh`
@@ -65,7 +65,7 @@ cmake --build external/run68x/build
 - `external/u8tosj`（UTF-8 -> Shift_JIS 変換）
 
 実環境では、`has060.x` と `u8tosj` を実行可能な形で用意し、`external/hlkx` をビルドする。
-`hlkx` 側の変換/ビルドは `external/hlkx/README.md` の手順に従う。
+`hlkx` 側の変換/ビルドは [external/hlkx/README.md](../../external/hlkx/README.md) の手順に従う。
 
 `has060.x` がアーカイブ配布の場合は、別途 `lhasa` などで展開して配置する。
 
