@@ -48,22 +48,28 @@ jobs:
 
   publish-main-badge:
     name: Publish Main Badge
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.BADGE_REPO != ''
     needs:
       - rust-check
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - name: Checkout
+      - name: Checkout badge repository
         uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.BADGE_REPO }}
+          ref: ${{ vars.BADGE_REPO_BRANCH != '' && vars.BADGE_REPO_BRANCH || 'main' }}
+          token: ${{ secrets.BADGE_REPO_TOKEN != '' && secrets.BADGE_REPO_TOKEN || github.token }}
+          path: badge-repo
 
       - name: Update badge json
         env:
           RUST_CHECK_RESULT: ${{ needs.rust-check.result }}
           SHA7: ${{ github.sha }}
+          BADGE_DIR: ${{ vars.BADGE_DIR != '' && vars.BADGE_DIR || 'rhlk' }}
         run: |
-          mkdir -p docs/badges
+          mkdir -p "badge-repo/${BADGE_DIR}"
           short_sha="${SHA7:0:7}"
           case "${RUST_CHECK_RESULT}" in
             success)
@@ -83,7 +89,7 @@ jobs:
               message="${short_sha} ${RUST_CHECK_RESULT}"
               ;;
           esac
-          cat > docs/badges/ci-main.json <<EOF
+          cat > "badge-repo/${BADGE_DIR}/ci-main.json" <<EOF
           {
             "schemaVersion": 1,
             "label": "CI main",
@@ -94,9 +100,10 @@ jobs:
 
       - name: Commit badge update
         run: |
+          cd badge-repo
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/badges/ci-main.json
+          git add .
           if git diff --cached --quiet; then
             echo "No badge changes"
             exit 0
@@ -140,22 +147,28 @@ jobs:
 
   publish-compat-badge:
     name: Publish Compatibility Badge
-    if: always() && github.event_name == 'workflow_dispatch' && inputs.run_compat && github.ref == 'refs/heads/main'
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.run_compat && github.ref == 'refs/heads/main' && vars.BADGE_REPO != ''
     needs:
       - compat-regression
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - name: Checkout
+      - name: Checkout badge repository
         uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.BADGE_REPO }}
+          ref: ${{ vars.BADGE_REPO_BRANCH != '' && vars.BADGE_REPO_BRANCH || 'main' }}
+          token: ${{ secrets.BADGE_REPO_TOKEN != '' && secrets.BADGE_REPO_TOKEN || github.token }}
+          path: badge-repo
 
       - name: Update compatibility badge json
         env:
           COMPAT_RESULT: ${{ needs.compat-regression.result }}
           SHA7: ${{ github.sha }}
+          BADGE_DIR: ${{ vars.BADGE_DIR != '' && vars.BADGE_DIR || 'rhlk' }}
         run: |
-          mkdir -p docs/badges
+          mkdir -p "badge-repo/${BADGE_DIR}"
           short_sha="${SHA7:0:7}"
           case "${COMPAT_RESULT}" in
             success)
@@ -175,7 +188,7 @@ jobs:
               message="${short_sha} ${COMPAT_RESULT}"
               ;;
           esac
-          cat > docs/badges/compat-manual.json <<EOF
+          cat > "badge-repo/${BADGE_DIR}/compat-manual.json" <<EOF
           {
             "schemaVersion": 1,
             "label": "compat manual",
@@ -186,9 +199,10 @@ jobs:
 
       - name: Commit compatibility badge update
         run: |
+          cd badge-repo
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/badges/compat-manual.json
+          git add .
           if git diff --cached --quiet; then
             echo "No badge changes"
             exit 0
