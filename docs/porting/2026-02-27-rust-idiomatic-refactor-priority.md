@@ -256,6 +256,8 @@
   - `linker.rs` の `parse_ar_members` で member header 解析を `parse_ar_member_header` (`ArMemberHeader`) に分離し、特殊メンバー分岐とヘッダ解析責務を分離。
   - `einfo_section_delta` の totals/placement 計算を `SectionTotals` / `SectionPlacement` に分離し、式展開の意図を明確化。
   - `validate_unsupported_expression_commands` から 1 オブジェクト分の検証を `collect_object_expression_diagnostics` に抽出し、ループ本体の責務を集約側に限定。
+  - `rebase_scd_info_table` を `rebase_sinfo_entries` / `rebase_einfo_entries` / `rebase_einfo_entry` に分割し、SCD info 補正処理の責務を段階化。
+  - common 参照解決を `resolve_scd_common_reference`、32bit オフセット補正を `adjust_u32_at` に抽出して重複ロジックを削減。
 
 検証:
 - `cargo test -q --manifest-path Cargo.toml`: pass

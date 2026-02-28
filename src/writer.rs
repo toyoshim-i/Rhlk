@@ -484,86 +484,139 @@ fn rebase_scd_info_table(
     let sinfo_bytes = (sinfo_count as usize)
         .saturating_mul(SCD_INFO_ENTRY_SIZE)
         .min(out.len());
+    rebase_sinfo_entries(&mut out, sinfo_bytes, placement, layout)?;
+    // Minimal einfo fixup:
+    // if entry starts with d6==0, the next long is sinfo index and must be rebased.
+    rebase_einfo_entries(
+        &mut out,
+        sinfo_bytes,
+        sinfo_pos_entries,
+        ninfo,
+        placement,
+        layout,
+        xdefs,
+    )?;
+    Ok(out)
+}
+
+fn rebase_sinfo_entries(
+    out: &mut [u8],
+    sinfo_bytes: usize,
+    placement: &BTreeMap<SectionKind, u32>,
+    layout: &LayoutPlan,
+) -> Result<()> {
+    const SCD_INFO_ENTRY_SIZE: usize = 18;
     let mut sinfo_offset = 0usize;
     while sinfo_offset + SCD_INFO_ENTRY_SIZE <= sinfo_bytes {
         let sect = u16::from_be_bytes([out[sinfo_offset + 12], out[sinfo_offset + 13]]);
-        let delta = sinfo_section_delta(sect, placement, layout)?;
-        if let Some(delta) = delta {
+        if let Some(delta) = sinfo_section_delta(sect, placement, layout)? {
             if delta != 0 {
-                let mut val = u32::from_be_bytes([
-                    out[sinfo_offset + 8],
-                    out[sinfo_offset + 9],
-                    out[sinfo_offset + 10],
-                    out[sinfo_offset + 11],
-                ]);
-                val = val.wrapping_add(i64_low_u32(delta));
-                out[sinfo_offset + 8..sinfo_offset + 12].copy_from_slice(&val.to_be_bytes());
+                adjust_u32_at(out, sinfo_offset + 8, delta);
             }
         }
         sinfo_offset += SCD_INFO_ENTRY_SIZE;
     }
+    Ok(())
+}
 
-    // Minimal einfo fixup:
-    // if entry starts with d6==0, the next long is sinfo index and must be rebased.
+fn rebase_einfo_entries(
+    out: &mut [u8],
+    sinfo_bytes: usize,
+    sinfo_pos_entries: u32,
+    ninfo: &[u8],
+    placement: &BTreeMap<SectionKind, u32>,
+    layout: &LayoutPlan,
+    xdefs: &HashMap<Vec<u8>, ScdXdef>,
+) -> Result<()> {
+    const SCD_INFO_ENTRY_SIZE: usize = 18;
     let mut einfo_offset = sinfo_bytes;
     while einfo_offset + SCD_INFO_ENTRY_SIZE <= out.len() {
-        let d6 = u32::from_be_bytes([
-            out[einfo_offset],
-            out[einfo_offset + 1],
-            out[einfo_offset + 2],
-            out[einfo_offset + 3],
-        ]);
-        let sect = u16::from_be_bytes([out[einfo_offset + 8], out[einfo_offset + 9]]);
-        if d6 == 0 {
-            let mut ref_idx =
-                u32::from_be_bytes([out[einfo_offset + 4], out[einfo_offset + 5], out[einfo_offset + 6], out[einfo_offset + 7]]);
-            if ref_idx != 0 {
-                ref_idx = ref_idx.saturating_add(sinfo_pos_entries);
-                out[einfo_offset + 4..einfo_offset + 8].copy_from_slice(&ref_idx.to_be_bytes());
-            }
-        } else {
-            if matches!(sect, 0x0004 | 0x0007 | 0x000a) {
-                bail!("unsupported SCD einfo section for d6!=0: {sect:#06x}");
-            }
-            if matches!(sect, 0x00fc..=0x00fe | 0xfffc..=0xfffe) {
-                let name = decode_scd_entry_name(&out[einfo_offset..einfo_offset + SCD_INFO_ENTRY_SIZE], ninfo)
-                    .with_context(|| format!("invalid SCD einfo name at offset {einfo_offset}"))?;
-                let Some(xdef) = xdefs.get(&name) else {
-                    bail!(
-                        "unresolved SCD einfo common-reference for d6!=0: {}",
-                        String::from_utf8_lossy(&name)
-                    );
-                };
-                let (resolved_off, resolved_sect): (u32, u16) = match xdef.section {
-                    SectionKind::Common => (xdef.value, 0x0003),
-                    SectionKind::RCommon => (xdef.value, 0x0006),
-                    SectionKind::RLCommon => (xdef.value, 0x0009),
-                    _ => bail!(
-                        "unsupported SCD einfo common-reference target section: {:?}",
-                        xdef.section
-                    ),
-                };
-                out[einfo_offset + 4..einfo_offset + 8].copy_from_slice(&resolved_off.to_be_bytes());
-                out[einfo_offset + 8..einfo_offset + 10].copy_from_slice(&resolved_sect.to_be_bytes());
-                einfo_offset += SCD_INFO_ENTRY_SIZE;
-                continue;
-            }
-            if let Some(delta) = einfo_section_delta(sect, placement, layout) {
-                if delta != 0 {
-                    let off = u32::from_be_bytes([
-                        out[einfo_offset + 4],
-                        out[einfo_offset + 5],
-                        out[einfo_offset + 6],
-                        out[einfo_offset + 7],
-                    ]);
-                    let adj = off.wrapping_add(i64_low_u32(delta));
-                    out[einfo_offset + 4..einfo_offset + 8].copy_from_slice(&adj.to_be_bytes());
-                }
-            }
-        }
+        rebase_einfo_entry(out, einfo_offset, sinfo_pos_entries, ninfo, placement, layout, xdefs)?;
         einfo_offset += SCD_INFO_ENTRY_SIZE;
     }
-    Ok(out)
+    Ok(())
+}
+
+fn rebase_einfo_entry(
+    out: &mut [u8],
+    einfo_offset: usize,
+    sinfo_pos_entries: u32,
+    ninfo: &[u8],
+    placement: &BTreeMap<SectionKind, u32>,
+    layout: &LayoutPlan,
+    xdefs: &HashMap<Vec<u8>, ScdXdef>,
+) -> Result<()> {
+    const SCD_INFO_ENTRY_SIZE: usize = 18;
+    let d6 = u32::from_be_bytes([
+        out[einfo_offset],
+        out[einfo_offset + 1],
+        out[einfo_offset + 2],
+        out[einfo_offset + 3],
+    ]);
+    let sect = u16::from_be_bytes([out[einfo_offset + 8], out[einfo_offset + 9]]);
+    if d6 == 0 {
+        let ref_idx = u32::from_be_bytes([
+            out[einfo_offset + 4],
+            out[einfo_offset + 5],
+            out[einfo_offset + 6],
+            out[einfo_offset + 7],
+        ]);
+        if ref_idx != 0 {
+            let rebased = ref_idx.saturating_add(sinfo_pos_entries);
+            out[einfo_offset + 4..einfo_offset + 8].copy_from_slice(&rebased.to_be_bytes());
+        }
+        return Ok(());
+    }
+
+    if matches!(sect, 0x0004 | 0x0007 | 0x000a) {
+        bail!("unsupported SCD einfo section for d6!=0: {sect:#06x}");
+    }
+    if matches!(sect, 0x00fc..=0x00fe | 0xfffc..=0xfffe) {
+        let name = decode_scd_entry_name(&out[einfo_offset..einfo_offset + SCD_INFO_ENTRY_SIZE], ninfo)
+            .with_context(|| format!("invalid SCD einfo name at offset {einfo_offset}"))?;
+        let (resolved_off, resolved_sect) = resolve_scd_common_reference(&name, xdefs)?;
+        out[einfo_offset + 4..einfo_offset + 8].copy_from_slice(&resolved_off.to_be_bytes());
+        out[einfo_offset + 8..einfo_offset + 10].copy_from_slice(&resolved_sect.to_be_bytes());
+        return Ok(());
+    }
+    if let Some(delta) = einfo_section_delta(sect, placement, layout) {
+        if delta != 0 {
+            adjust_u32_at(out, einfo_offset + 4, delta);
+        }
+    }
+    Ok(())
+}
+
+fn resolve_scd_common_reference(
+    name: &[u8],
+    xdefs: &HashMap<Vec<u8>, ScdXdef>,
+) -> Result<(u32, u16)> {
+    let Some(xdef) = xdefs.get(name) else {
+        bail!(
+            "unresolved SCD einfo common-reference for d6!=0: {}",
+            String::from_utf8_lossy(name)
+        );
+    };
+    match xdef.section {
+        SectionKind::Common => Ok((xdef.value, 0x0003)),
+        SectionKind::RCommon => Ok((xdef.value, 0x0006)),
+        SectionKind::RLCommon => Ok((xdef.value, 0x0009)),
+        _ => bail!(
+            "unsupported SCD einfo common-reference target section: {:?}",
+            xdef.section
+        ),
+    }
+}
+
+fn adjust_u32_at(bytes: &mut [u8], offset: usize, delta: i64) {
+    let base = u32::from_be_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ]);
+    let adjusted = base.wrapping_add(i64_low_u32(delta));
+    bytes[offset..offset + 4].copy_from_slice(&adjusted.to_be_bytes());
 }
 
 fn sinfo_section_delta(
