@@ -359,7 +359,6 @@ fn build_scd_passthrough(
     summaries: &[ObjectSummary],
     layout: &LayoutPlan,
 ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
-    const SCD_HEADER_SIZE: usize = 12;
     let xdefs = build_scd_xdef_map(summaries);
     let mut line_table = Vec::new();
     let mut info_table = Vec::new();
@@ -368,21 +367,9 @@ fn build_scd_passthrough(
 
     for (idx, obj) in objects.iter().enumerate() {
         let tail = &obj.scd_tail;
-        if tail.len() < SCD_HEADER_SIZE {
+        let Some(view) = parse_scd_tail_view(tail) else {
             continue;
-        }
-        let linfo_size = u32::from_be_bytes([tail[0], tail[1], tail[2], tail[3]]) as usize;
-        let sinfo_plus_einfo_size = u32::from_be_bytes([tail[4], tail[5], tail[6], tail[7]]) as usize;
-        let ninfo_size = u32::from_be_bytes([tail[8], tail[9], tail[10], tail[11]]) as usize;
-        let total = SCD_HEADER_SIZE
-            .saturating_add(linfo_size)
-            .saturating_add(sinfo_plus_einfo_size)
-            .saturating_add(ninfo_size);
-        if total > tail.len() {
-            continue;
-        }
-
-        let mut tail_offset = SCD_HEADER_SIZE;
+        };
         // HLK make_scdinfo compatible line fixup:
         // - location!=0 : + text_pos
         // - location==0 : + cumulative sinfo_pos(entries)
@@ -391,29 +378,61 @@ fn build_scd_passthrough(
             .get(&SectionKind::Text)
             .copied()
             .unwrap_or(0);
-        let linfo = &tail[tail_offset..tail_offset + linfo_size];
-        line_table.extend_from_slice(&rebase_scd_line_table(linfo, text_pos, sinfo_pos_entries));
-        tail_offset += linfo_size;
-        let sinfo_count = extract_sinfo_count(tail, linfo_size);
-        let sinfo_plus_einfo = &tail[tail_offset..tail_offset + sinfo_plus_einfo_size];
-        let ninfo =
-            &tail[tail_offset + sinfo_plus_einfo_size..tail_offset + sinfo_plus_einfo_size + ninfo_size];
+        line_table.extend_from_slice(&rebase_scd_line_table(view.linfo, text_pos, sinfo_pos_entries));
         info_table.extend_from_slice(&rebase_scd_info_table(
-            sinfo_plus_einfo,
-            ninfo,
-            sinfo_count,
+            view.sinfo_plus_einfo,
+            view.ninfo,
+            view.sinfo_count,
             sinfo_pos_entries,
             &layout.placements[idx].by_section,
             layout,
             &xdefs,
         )?);
-        tail_offset += sinfo_plus_einfo_size;
-        name_table.extend_from_slice(&tail[tail_offset..tail_offset + ninfo_size]);
+        name_table.extend_from_slice(view.ninfo);
 
-        sinfo_pos_entries = sinfo_pos_entries.saturating_add(sinfo_count);
+        sinfo_pos_entries = sinfo_pos_entries.saturating_add(view.sinfo_count);
     }
 
     Ok((line_table, info_table, name_table))
+}
+
+struct ScdTailView<'a> {
+    linfo: &'a [u8],
+    sinfo_plus_einfo: &'a [u8],
+    ninfo: &'a [u8],
+    sinfo_count: u32,
+}
+
+fn parse_scd_tail_view(tail: &[u8]) -> Option<ScdTailView<'_>> {
+    const SCD_HEADER_SIZE: usize = 12;
+    if tail.len() < SCD_HEADER_SIZE {
+        return None;
+    }
+
+    let linfo_size = u32::from_be_bytes([tail[0], tail[1], tail[2], tail[3]]) as usize;
+    let sinfo_plus_einfo_size = u32::from_be_bytes([tail[4], tail[5], tail[6], tail[7]]) as usize;
+    let ninfo_size = u32::from_be_bytes([tail[8], tail[9], tail[10], tail[11]]) as usize;
+    let total = SCD_HEADER_SIZE
+        .saturating_add(linfo_size)
+        .saturating_add(sinfo_plus_einfo_size)
+        .saturating_add(ninfo_size);
+    if total > tail.len() {
+        return None;
+    }
+
+    let linfo_start = SCD_HEADER_SIZE;
+    let sinfo_start = linfo_start + linfo_size;
+    let ninfo_start = sinfo_start + sinfo_plus_einfo_size;
+    let linfo = &tail[linfo_start..sinfo_start];
+    let sinfo_plus_einfo = &tail[sinfo_start..ninfo_start];
+    let ninfo = &tail[ninfo_start..ninfo_start + ninfo_size];
+    let sinfo_count = extract_sinfo_count(tail, linfo_size);
+    Some(ScdTailView {
+        linfo,
+        sinfo_plus_einfo,
+        ninfo,
+        sinfo_count,
+    })
 }
 
 fn rebase_scd_line_table(input: &[u8], text_pos: u32, sinfo_pos_entries: u32) -> Vec<u8> {
@@ -1865,12 +1884,7 @@ fn validate_unsupported_expression_commands(
     summaries: &[ObjectSummary],
     g2lk_mode: bool,
 ) -> Result<()> {
-    let mut global_symbols = HashMap::<Vec<u8>, Symbol>::new();
-    for summary in summaries {
-        for sym in &summary.symbols {
-            global_symbols.insert(sym.name.clone(), sym.clone());
-        }
-    }
+    let global_symbols = collect_global_symbols(summaries);
 
     let mut diagnostics = Vec::<String>::new();
     for (obj_idx, (obj, summary)) in objects.iter().zip(summaries.iter()).enumerate() {
@@ -1905,6 +1919,16 @@ fn validate_unsupported_expression_commands(
         return Ok(());
     }
     bail!("{}", diagnostics.join("\n"));
+}
+
+fn collect_global_symbols(summaries: &[ObjectSummary]) -> HashMap<Vec<u8>, Symbol> {
+    let mut global_symbols = HashMap::<Vec<u8>, Symbol>::new();
+    for summary in summaries {
+        for sym in &summary.symbols {
+            global_symbols.insert(sym.name.clone(), sym.clone());
+        }
+    }
+    global_symbols
 }
 
 fn push_expr_diagnostic(

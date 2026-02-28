@@ -251,6 +251,8 @@
   - `linker.rs` の request 解決候補生成を `push_candidate_variants` helper へ抽出し、検索順ロジックの重複を削減。
   - `validate_unsupported_expression_commands` の ctor/dtor 関連状態を `CtorDtorUsage` へ集約し、分岐散在を削減。
   - 同 `CtorDtorUsage` は bool 羅列ではなくビットマスクで状態管理し、可読性を維持しつつ `clippy::struct_excessive_bools` 警告を回避。
+  - `build_scd_passthrough` の tail 切り出し処理を `parse_scd_tail_view` (`ScdTailView`) に分離し、メインループを「line/info/name の再配置処理」中心に簡素化。
+  - `validate_unsupported_expression_commands` のグローバルシンボル収集を `collect_global_symbols` に切り出し、責務を明確化。
 
 検証:
 - `cargo test -q --manifest-path Cargo.toml`: pass
