@@ -109,27 +109,26 @@ pub(crate) fn build_map_text(
         rcur = rcur.saturating_add(sz);
     }
 
-    let def_owner = build_definition_owner_map(summaries, input_paths);
+    let def_owner = build_definition_owner_map(summaries);
     for (idx, summary) in summaries.iter().enumerate() {
         out.push_str("\n\n");
         out.push_str("==========================================================\n");
-        let _ = writeln!(out, "{}", display_obj_name(input_paths.get(idx), idx));
+        let _ = writeln!(
+            out,
+            "{}",
+            display_obj_name(input_paths.get(idx).map(String::as_str), idx)
+        );
         out.push_str("==========================================================\n");
         out.push_str(&format_align_line(summary.object_align));
 
-        let placement = layout
-            .placements
-            .get(idx)
-            .map(|p| &p.by_section)
-            .cloned()
-            .unwrap_or_default();
+        let placement = layout.placements.get(idx).map(|p| &p.by_section);
         for (name, kind) in [
             ("text", SectionKind::Text),
             ("data", SectionKind::Data),
             ("bss", SectionKind::Bss),
             ("stack", SectionKind::Stack),
         ] {
-            let pos = placement.get(&kind).copied().unwrap_or(0);
+            let pos = placement.and_then(|p| p.get(&kind).copied()).unwrap_or(0);
             let size = summary
                 .declared_section_sizes
                 .get(&kind)
@@ -145,8 +144,10 @@ pub(crate) fn build_map_text(
                 let n = String::from_utf8_lossy(&xr.name);
                 let owner = def_owner
                     .get(xr.name.as_slice())
-                    .cloned()
-                    .unwrap_or_else(|| "<unknown>".to_string());
+                    .copied()
+                    .map_or_else(|| "<unknown>".to_string(), |owner_idx| {
+                        display_obj_name(input_paths.get(owner_idx).map(String::as_str), owner_idx)
+                    });
                 let _ = writeln!(out, "{n:<24} : in {owner}");
             }
         }
@@ -167,25 +168,21 @@ pub(crate) fn build_map_text(
     out
 }
 
-fn build_definition_owner_map(
-    summaries: &[ObjectSummary],
-    input_paths: &[String],
-) -> HashMap<Vec<u8>, String> {
-    let mut out = HashMap::<Vec<u8>, String>::new();
+fn build_definition_owner_map(summaries: &[ObjectSummary]) -> HashMap<Vec<u8>, usize> {
+    let mut out = HashMap::<Vec<u8>, usize>::new();
     for (idx, sum) in summaries.iter().enumerate() {
-        let owner = display_obj_name(input_paths.get(idx), idx);
         for sym in &sum.symbols {
-            out.entry(sym.name.clone()).or_insert_with(|| owner.clone());
+            out.entry(sym.name.clone()).or_insert(idx);
         }
     }
     out
 }
 
-fn display_obj_name(path: Option<&String>, idx: usize) -> String {
+fn display_obj_name(path: Option<&str>, idx: usize) -> String {
     if let Some(p) = path {
         return Path::new(p)
             .file_name()
-            .map_or_else(|| p.clone(), |v| v.to_string_lossy().to_string());
+            .map_or_else(|| p.to_string(), |v| v.to_string_lossy().to_string());
     }
     format!("obj{idx}")
 }
