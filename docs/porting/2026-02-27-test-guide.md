@@ -7,6 +7,11 @@ Rhlk のテストを、ローカル環境で再現可能な形で実行するた
 - 総合品質ゲート（推奨）
   - 対象: `clippy` + Rust test + HLK 互換回帰を連続実行
   - 実行: `./tools/run_quality_gate.sh`
+- CI（GitHub Actions）
+  - 定義: `.github/workflows/ci.yml`
+  - 対象: `clippy` + Rust test（`cargo test`）
+  - トリガー: `push`（`main`）, `pull_request`, `workflow_dispatch`
+  - 補足: HLK 互換回帰は外部ツール依存が大きいため、現状は CI 対象外（ローカル実行）
 - Rust unit/integration test
   - 対象: `src/*` の unit test、`tests/*` の integration test
   - 実行: `cargo test`
