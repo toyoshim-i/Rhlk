@@ -799,14 +799,7 @@ fn select_archive_members(
 ) -> Vec<usize> {
     let mut selected = Vec::<usize>::new();
     let mut selected_mask = vec![false; members.len()];
-    let mut defs = HashSet::<Vec<u8>>::new();
-    let mut unresolved = HashSet::<Vec<u8>>::new();
-    for sum in loaded_summaries {
-        add_defined_symbols(&mut defs, &sum.symbols);
-    }
-    for sum in loaded_summaries {
-        extend_unresolved(&mut unresolved, &defs, &sum.xrefs);
-    }
+    let (mut defs, mut unresolved) = build_symbol_sets(loaded_summaries);
     if unresolved.is_empty() {
         return selected;
     }
@@ -821,18 +814,48 @@ fn select_archive_members(
             if !provides_needed {
                 continue;
             }
-            selected.push(idx);
-            selected_mask[idx] = true;
+            select_member(
+                idx,
+                &mut selected,
+                &mut selected_mask,
+                &mut defs,
+                &mut unresolved,
+                sum,
+            );
             changed = true;
-            add_defined_symbols(&mut defs, &sum.symbols);
-            extend_unresolved(&mut unresolved, &defs, &sum.xrefs);
-            unresolved.retain(|name| !defs.contains(name));
         }
         if !changed {
             break;
         }
     }
     selected
+}
+
+fn build_symbol_sets(loaded_summaries: &[ObjectSummary]) -> (HashSet<Vec<u8>>, HashSet<Vec<u8>>) {
+    let mut defs = HashSet::<Vec<u8>>::new();
+    let mut unresolved = HashSet::<Vec<u8>>::new();
+    for sum in loaded_summaries {
+        add_defined_symbols(&mut defs, &sum.symbols);
+    }
+    for sum in loaded_summaries {
+        extend_unresolved(&mut unresolved, &defs, &sum.xrefs);
+    }
+    (defs, unresolved)
+}
+
+fn select_member(
+    idx: usize,
+    selected: &mut Vec<usize>,
+    selected_mask: &mut [bool],
+    defs: &mut HashSet<Vec<u8>>,
+    unresolved: &mut HashSet<Vec<u8>>,
+    summary: &ObjectSummary,
+) {
+    selected.push(idx);
+    selected_mask[idx] = true;
+    add_defined_symbols(defs, &summary.symbols);
+    extend_unresolved(unresolved, defs, &summary.xrefs);
+    unresolved.retain(|name| !defs.contains(name));
 }
 
 fn add_defined_symbols(defs: &mut HashSet<Vec<u8>>, symbols: &[crate::resolver::Symbol]) {

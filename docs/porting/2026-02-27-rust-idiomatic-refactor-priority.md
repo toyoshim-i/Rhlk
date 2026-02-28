@@ -258,6 +258,7 @@
   - `validate_unsupported_expression_commands` から 1 オブジェクト分の検証を `collect_object_expression_diagnostics` に抽出し、ループ本体の責務を集約側に限定。
   - `rebase_scd_info_table` を `rebase_sinfo_entries` / `rebase_einfo_entries` / `rebase_einfo_entry` に分割し、SCD info 補正処理の責務を段階化。
   - common 参照解決を `resolve_scd_common_reference`、32bit オフセット補正を `adjust_u32_at` に抽出して重複ロジックを削減。
+  - `select_archive_members` のセット初期化と選択反映を `build_symbol_sets` / `select_member` へ抽出し、選択ループ本体を最小化。
 
 検証:
 - `cargo test -q --manifest-path Cargo.toml`: pass
