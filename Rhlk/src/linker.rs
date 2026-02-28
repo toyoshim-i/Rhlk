@@ -210,10 +210,7 @@ fn resolve_lib_inputs(args: &Args) -> anyhow::Result<Vec<PathBuf>> {
     if args.libs.is_empty() && !args.use_env_lib {
         return Ok(out);
     }
-    let mut search_paths = Vec::<PathBuf>::new();
-    for p in &args.lib_paths {
-        search_paths.push(p.clone());
-    }
+    let mut search_paths = args.lib_paths.clone();
     if args.use_env_lib {
         if let Some(v) = env::var_os("LIB") {
             search_paths.extend(env::split_paths(&v));

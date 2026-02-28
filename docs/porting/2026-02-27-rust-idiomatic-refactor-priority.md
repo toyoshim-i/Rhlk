@@ -235,6 +235,7 @@
   - 入力キュー初期化を `pending.extend(initial_inputs.iter().cloned())` に整理し、反復 push の定型コードを削減。
   - `resolve_output_path` で不要な `PathBuf` 一時変数を削除し、`inputs.first()` 参照から直接 stem/parent を導出する形へ簡素化。
   - `linker` テストの単一入力ケースを `Vec` 生成から `std::slice::from_ref` へ置換し、不要 clone/一時確保を削減。
+  - `resolve_lib_inputs` の検索パス初期化を `args.lib_paths.clone()` ベースへ簡素化し、push ループを削減。
 
 検証:
 - `cargo test -q --manifest-path Rhlk/Cargo.toml`: pass
